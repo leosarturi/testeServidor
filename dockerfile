@@ -3,7 +3,7 @@ FROM mcr.microsoft.com/dotnet/sdk:7.0 AS build
 WORKDIR /src
 
 # Copia csproj e restaura dependências
-COPY *.csproj ./
+COPY /ServidorLocal/*.csproj ./
 RUN dotnet restore
 
 # Copia todo o código e compila
