@@ -8,7 +8,7 @@ RUN dotnet restore
 
 # Copia todo o código e compila
 COPY ServidorLocal/. ./ServidorLocal
-RUN dotnet publish -c Release -o /app
+RUN dotnet publish ./ServidorLocal/ServidorLocal.csproj -c Release -o /app
 
 # Etapa 2 - Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:9.0
