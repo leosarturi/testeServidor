@@ -16,7 +16,7 @@ WORKDIR /app
 COPY --from=build /app .
 
 # Expõe a porta (ajuste se não for 5260)
-EXPOSE 5260
+EXPOSE 443
 
 # Comando de entrada
 ENTRYPOINT ["dotnet", "ServidorLocal.dll"]
