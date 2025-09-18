@@ -7,7 +7,7 @@ COPY /ServidorLocal/*.csproj ./
 RUN dotnet restore
 
 # Copia todo o código e compila
-COPY . .
+COPY ServidorLocal/. ./ServidorLocal
 RUN dotnet publish -c Release -o /app
 
 # Etapa 2 - Runtime
