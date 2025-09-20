@@ -1,6 +1,4 @@
 C:\Users\sartu\OneDrive\Desktop\rpgprofessor\ServidorLocal\obj\Debug\net9.0\ServidorLocal.GeneratedMSBuildEditorConfig.editorconfig
-C:\Users\sartu\OneDrive\Desktop\rpgprofessor\ServidorLocal\obj\Debug\net9.0\ServidorLocal.AssemblyInfoInputs.cache
-C:\Users\sartu\OneDrive\Desktop\rpgprofessor\ServidorLocal\obj\Debug\net9.0\ServidorLocal.AssemblyInfo.cs
 C:\Users\sartu\OneDrive\Desktop\rpgprofessor\ServidorLocal\obj\Debug\net9.0\ServidorLocal.csproj.CoreCompileInputs.cache
 C:\Users\sartu\OneDrive\Desktop\rpgprofessor\ServidorLocal\obj\Debug\net9.0\ServidorLocal.MvcApplicationPartsAssemblyInfo.cache
 C:\Users\sartu\OneDrive\Desktop\rpgprofessor\ServidorLocal\bin\Debug\net9.0\appsettings.Development.json
@@ -21,3 +19,4 @@ C:\Users\sartu\OneDrive\Desktop\rpgprofessor\ServidorLocal\obj\Debug\net9.0\refi
 C:\Users\sartu\OneDrive\Desktop\rpgprofessor\ServidorLocal\obj\Debug\net9.0\ServidorLocal.pdb
 C:\Users\sartu\OneDrive\Desktop\rpgprofessor\ServidorLocal\obj\Debug\net9.0\ServidorLocal.genruntimeconfig.cache
 C:\Users\sartu\OneDrive\Desktop\rpgprofessor\ServidorLocal\obj\Debug\net9.0\ref\ServidorLocal.dll
+C:\Users\sartu\OneDrive\Desktop\rpgprofessor\ServidorLocal\obj\Debug\net9.0\ServidorLocal.sourcelink.json

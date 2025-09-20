@@ -12,6 +12,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Linq;
+using System.Diagnostics;
 
 namespace ServidorLocal
 {
@@ -20,6 +21,7 @@ namespace ServidorLocal
         // -------------------- Estado --------------------
         private static readonly ConcurrentDictionary<string, WebSocket> _clients = new();
         private static readonly ConcurrentDictionary<string, PlayerData> _players = new();
+        private static readonly ConcurrentDictionary<string, string> _playersMap = new();
         private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
 
         public static event Action<string>? OnPlayerConnected;
@@ -28,13 +30,15 @@ namespace ServidorLocal
         // -------------------- Skill Config --------------------
         private static readonly HashSet<string> _validActions = new(StringComparer.OrdinalIgnoreCase)
         {
-            "aa", "s1", "s2"
+            "aa",
+            "s1",
+            "s2"
         };
         private const bool NormalizeSkillDirection = true;
 
         // -------------------- Skill helpers --------------------
-        private static bool IsValidSkillAction(string? action)
-            => !string.IsNullOrWhiteSpace(action) && _validActions.Contains(action!);
+        private static bool IsValidSkillAction(string? action) =>
+            !string.IsNullOrWhiteSpace(action) && _validActions.Contains(action!);
 
         private static (float x, float y) Normalize(float x, float y)
         {
@@ -61,11 +65,9 @@ namespace ServidorLocal
                 }
             };
 
-            var json = JsonSerializer.Serialize(payload, _json);
+            var json = JsonSerializer.Serialize(payload);
             await BroadcastRawAsync(json, excludeClientId, ct);
         }
-
-
 
         // -------------------- Startup --------------------
         public static void Main(string[] args)
@@ -80,7 +82,6 @@ namespace ServidorLocal
             OnPlayerDisconnected += id => Console.WriteLine($"[Evento] Player desconectado: {id}");
 
             app.Map("/ws", HandleWebSocketAsync);
-
             app.Run();
         }
 
@@ -106,19 +107,27 @@ namespace ServidorLocal
             }
 
             var ct = context.RequestAborted;
-
             var clientId = await ReceiveFirstMessageAsClientIdAsync(socket, ct);
             if (string.IsNullOrWhiteSpace(clientId))
                 clientId = Guid.NewGuid().ToString();
 
             await SendClientIdAsync(socket, clientId, ct);
-
             RegisterClient(clientId, socket);
             _ = BroadcastPlayerConnectedAsync(clientId, ct);
-
+            await ChangeMap(clientId, "cidade", ct);
             await HandleClientLoopAsync(socket, clientId, ct);
         }
 
+        private static async Task ChangeMap(string clientId, string map, CancellationToken ct)
+        {
+            if (clientId == "" || map == "") return;
+            _playersMap.TryGetValue(clientId, out var oldMap);
+
+            Console.WriteLine($"Cliente : {clientId} trocou de {oldMap} para {map}");
+            _playersMap[clientId] = map;
+            await BroadcastPlayerChangedMapAsync(clientId, oldMap, ct);
+
+        }
         // -------------------- Handshake --------------------
         private static async Task<string> ReceiveFirstMessageAsClientIdAsync(WebSocket socket, CancellationToken ct)
         {
@@ -144,7 +153,9 @@ namespace ServidorLocal
             try
             {
                 var idBytes = Encoding.UTF8.GetBytes(clientId);
+
                 await socket.SendAsync(idBytes, WebSocketMessageType.Text, true, ct);
+
             }
             catch (Exception ex)
             {
@@ -170,7 +181,6 @@ namespace ServidorLocal
 
             _clients.TryRemove(clientId, out _);
             _players.TryRemove(clientId, out _);
-
             OnPlayerDisconnected?.Invoke(clientId);
             _ = BroadcastPlayerDisconnectedAsync(clientId, ct);
         }
@@ -179,24 +189,20 @@ namespace ServidorLocal
         private static async Task HandleClientLoopAsync(WebSocket socket, string clientId, CancellationToken ct)
         {
             var buffer = new byte[4096];
-
             try
             {
                 while (socket.State == WebSocketState.Open && !ct.IsCancellationRequested)
                 {
                     WebSocketReceiveResult result;
                     using var ms = new MemoryStream();
-
                     do
                     {
                         result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
-
                         if (result.MessageType == WebSocketMessageType.Close)
                         {
                             await SafeCloseAndCleanupAsync(clientId, socket, ct);
                             return;
                         }
-
                         if (result.MessageType == WebSocketMessageType.Text)
                         {
                             ms.Write(buffer, 0, result.Count);
@@ -222,25 +228,37 @@ namespace ServidorLocal
             EnvelopeTypeOnly head;
             try
             {
-                head = JsonSerializer.Deserialize<EnvelopeTypeOnly>(msg, _json);
+                head = JsonSerializer.Deserialize<EnvelopeTypeOnly>(msg);
             }
             catch
             {
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(head.type))
-                return;
+            if (string.IsNullOrWhiteSpace(head.type)) return;
 
             switch (head.type.ToLowerInvariant())
             {
+                case "trocar_mapa":
+                    try
+                    {
+
+                        SocketEnvelope<MapData> envelope = JsonSerializer.Deserialize<SocketEnvelope<MapData>>(msg);
+                        Console.WriteLine(msg);
+                        await ChangeMap(envelope.data.idplayer, envelope.data.mapa, ct);
+                        return;
+                    }
+                    catch
+                    {
+
+                    }
+                    break;
                 case "skill":
                     {
-                        // { type: "skill", data: [ { action, dx, dy }, ... ] }
                         SocketEnvelope<List<SkillCastInput>>? env = null;
                         try
                         {
-                            env = JsonSerializer.Deserialize<SocketEnvelope<List<SkillCastInput>>>(msg, _json);
+                            env = JsonSerializer.Deserialize<SocketEnvelope<List<SkillCastInput>>>(msg);
                         }
                         catch { }
 
@@ -248,13 +266,9 @@ namespace ServidorLocal
 
                         foreach (var input in env.Value.data)
                         {
-                            if (!IsValidSkillAction(input.action))
-                                continue;
+                            if (!IsValidSkillAction(input.action)) continue;
 
-                            var (dx, dy) = NormalizeSkillDirection
-                                ? Normalize(input.dx, input.dy)
-                                : (input.dx, input.dy);
-
+                            var (dx, dy) = NormalizeSkillDirection ? Normalize(input.dx, input.dy) : (input.dx, input.dy);
                             var skill = new SkillCast(
                                 idplayer: clientId,
                                 action: input.action!.ToLowerInvariant(),
@@ -267,14 +281,12 @@ namespace ServidorLocal
                         }
                         return;
                     }
-
                 case "player":
                     {
-                        // { type: "player", data: [ { posx, posy }, ... ] }
                         SocketEnvelope<List<PlayerData>>? env = null;
                         try
                         {
-                            env = JsonSerializer.Deserialize<SocketEnvelope<List<PlayerData>>>(msg, _json);
+                            env = JsonSerializer.Deserialize<SocketEnvelope<List<PlayerData>>>(msg);
                         }
                         catch { }
 
@@ -283,32 +295,44 @@ namespace ServidorLocal
                         foreach (var item in env.Value.data)
                         {
                             var coerced = item with { idplayer = clientId };
-                            _players[clientId] = coerced; // usa o último como estado atual
+                            _players[clientId] = coerced;
                         }
 
-                        await BroadcastAllPlayersAsync(ct);
+                        await BroadcastAllPlayersAsync(clientId, ct);
                         return;
                     }
-
                 default:
                     return;
             }
         }
 
         // -------------------- Broadcasts --------------------
-        private static async Task BroadcastAllPlayersAsync(CancellationToken ct)
+        private static async Task BroadcastAllPlayersAsync(string clientId, CancellationToken ct)
         {
             try
             {
-                var data = JsonSerializer.Serialize(
-                    new { type = "player", data = _players.Values.ToList() }, _json);
-                var bytes = Encoding.UTF8.GetBytes(data);
+
 
                 foreach (var kvp in _clients)
                 {
                     if (kvp.Value.State == WebSocketState.Open)
+                    {
+                        var data = JsonSerializer.Serialize(
+                            new
+                            {
+                                type = "player",
+                                data = _players.Values
+                                    .Where(p => _playersMap.TryGetValue(p.idplayer, out var map) && map == _playersMap[kvp.Key])
+                                    .ToList()
+                            },
+                            _json
+                        );
+
+                        var bytes = Encoding.UTF8.GetBytes(data);
                         await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+                    }
                 }
+
             }
             catch (Exception ex)
             {
@@ -318,26 +342,72 @@ namespace ServidorLocal
 
         private static async Task BroadcastPlayerConnectedAsync(string clientId, CancellationToken ct)
         {
-            var message = JsonSerializer.Serialize(new { type = "connect", idplayer = clientId }, _json);
-            await BroadcastRawAsync(message, null, ct);
+            var message = JsonSerializer.Serialize(new { type = "connect", idplayer = clientId });
+            var bytes = Encoding.UTF8.GetBytes(message);
+
+            foreach (var kvp in _clients)
+            {
+
+                if (_playersMap[kvp.Key] != _playersMap[clientId]) continue;
+
+                if (kvp.Value.State == WebSocketState.Open)
+                {
+                    try
+                    {
+                        await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+                    }
+                    catch { /* ignore */ }
+                }
+            }
+
         }
 
         private static async Task BroadcastPlayerDisconnectedAsync(string clientId, CancellationToken ct)
         {
-            var message = JsonSerializer.Serialize(new { type = "disconnect", idplayer = clientId }, _json);
+            var message = JsonSerializer.Serialize(new { type = "disconnect", idplayer = clientId });
             await BroadcastRawAsync(message, null, ct);
         }
-
+        private static async Task BroadcastPlayerChangedMapAsync(string clientId, string? oldMap, CancellationToken ct)
+        {
+            var message = JsonSerializer.Serialize(new { type = "disconnect", idplayer = clientId });
+            if (oldMap == null) return;
+            await BroadMapChangedAsync(message, clientId, oldMap, ct);
+        }
 
         private static async Task BroadcastRawAsync(string text, string? excludeClientId, CancellationToken ct)
         {
             var bytes = Encoding.UTF8.GetBytes(text);
+
             foreach (var kvp in _clients)
             {
                 if (excludeClientId is not null && kvp.Key == excludeClientId) continue;
+                if (excludeClientId is not null && _playersMap[kvp.Key] != _playersMap[excludeClientId]) continue;
+
                 if (kvp.Value.State == WebSocketState.Open)
                 {
-                    try { await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct); }
+                    try
+                    {
+                        await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+                    }
+                    catch { /* ignore */ }
+                }
+            }
+        }
+        private static async Task BroadMapChangedAsync(string text, string? excludeClientId, string oldMap, CancellationToken ct)
+        {
+            var bytes = Encoding.UTF8.GetBytes(text);
+
+            foreach (var kvp in _clients)
+            {
+                if (excludeClientId is not null && kvp.Key == excludeClientId) continue;
+                if (excludeClientId is not null && _playersMap[kvp.Key] != oldMap) continue;
+
+                if (kvp.Value.State == WebSocketState.Open)
+                {
+                    try
+                    {
+                        await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+                    }
                     catch { /* ignore */ }
                 }
             }
