@@ -21,6 +21,78 @@ namespace ServidorLocal
         public static event Action<string>? OnPlayerConnected;
         public static event Action<string>? OnPlayerDisconnected;
 
+        // -------------------- Skill Config --------------------
+        private static readonly HashSet<string> _validActions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "aa", "s1", "s2"
+        };
+
+        // Normalizar direção para vetor unitário?
+        private const bool NormalizeSkillDirection = true;
+
+        // -------------------- Skill: parsing/validação/normalização --------------------
+        private static bool TryParseSkillInput(string msg, out SkillCastInput input)
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<SkillCastInput?>(msg, _json);
+                if (parsed is { } value)
+                {
+                    input = value;
+                    return true;
+                }
+            }
+            catch { /* ignore */ }
+
+            input = default;
+            return false;
+        }
+
+        private static bool IsValidSkillAction(string? action)
+            => !string.IsNullOrWhiteSpace(action) && _validActions.Contains(action!);
+
+        private static (float x, float y) Normalize(float x, float y)
+        {
+            var len = MathF.Sqrt(x * x + y * y);
+            if (len <= 0.0001f) return (0f, 0f);
+            return (x / len, y / len);
+        }
+
+        // -------------------- Broadcasts de Skill --------------------
+        private static async Task BroadcastSkillAsync(SkillCast skill, string excludeClientId, CancellationToken ct)
+        {
+            var json = JsonSerializer.Serialize(new
+            {
+                type = "skill",
+                idplayer = skill.idplayer,
+                action = skill.action,
+                dir = new { x = skill.dx, y = skill.dy },
+                ts = skill.tsUtcMs
+            }, _json);
+
+            await BroadcastRawAsync(json, excludeClientId, ct);
+        }
+
+        // Overload com exclusão do próprio emissor
+        private static async Task BroadcastRawAsync(string text, string? excludeClientId, CancellationToken ct)
+        {
+            var bytes = Encoding.UTF8.GetBytes(text);
+            foreach (var kvp in _clients)
+            {
+                if (excludeClientId is not null && kvp.Key == excludeClientId)
+                    continue;
+
+                if (kvp.Value.State == WebSocketState.Open)
+                {
+                    try { await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct); }
+                    catch { /* não derruba o broadcast */ }
+                }
+            }
+        }
+
+
+
+
         // -------------------- Startup --------------------
         public static void Main(string[] args)
         {
@@ -189,24 +261,83 @@ namespace ServidorLocal
         // -------------------- Tratamento de texto --------------------
         private static async Task HandleTextMessageAsync(string clientId, string msg, CancellationToken ct)
         {
-            // espera PlayerData; se vier sem idplayer, sobrescrevemos
-            PlayerData data;
+            // 1) Descobre o tipo
+            ServidorLocal.Domain.EnvelopeTypeOnly head;
             try
             {
-                var incoming = JsonSerializer.Deserialize<PlayerData?>(msg, _json);
-                data = incoming.HasValue
-                    ? incoming.Value with { idplayer = clientId }
-                    : new PlayerData(clientId, 0, 0);
+                head = JsonSerializer.Deserialize<ServidorLocal.Domain.EnvelopeTypeOnly>(msg, _json);
             }
             catch
             {
-                // mensagem inválida -> ignora
+                // payload inválido
                 return;
             }
 
-            _players[clientId] = data;
-            await BroadcastAllPlayersAsync(ct);
+            if (string.IsNullOrWhiteSpace(head.type))
+                return;
+
+            switch (head.type.ToLowerInvariant())
+            {
+                case "skill":
+                {
+                    // { type: "skill", data: { action, dx, dy } }
+                    ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.SkillCastInput>? env = null;
+                    try
+                    {
+                        env = JsonSerializer.Deserialize<ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.SkillCastInput>>(msg, _json);
+                    }
+                    catch { /* ignore */ }
+
+                    if (env is null) return;
+
+                    var input = env.Value.data;
+
+                    if (!IsValidSkillAction(input.action))
+                        return;
+
+                    var (dx, dy) = NormalizeSkillDirection
+                        ? Normalize(input.dx, input.dy)
+                        : (input.dx, input.dy);
+
+                    var skill = new ServidorLocal.Domain.SkillCast(
+                        idplayer: clientId,
+                        action: input.action!.ToLowerInvariant(),
+                        dx: dx,
+                        dy: dy,
+                        tsUtcMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                    );
+
+                    // Broadcast para todos, exceto o emissor
+                    await BroadcastSkillAsync(skill, excludeClientId: clientId, ct);
+                    return;
+                }
+
+                case "player":
+                {
+                    // { type: "player", data: { posx, posy } }
+                    ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.PlayerData>? env = null;
+                    try
+                    {
+                        env = JsonSerializer.Deserialize<ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.PlayerData>>(msg, _json);
+                    }
+                    catch { /* ignore */ }
+
+                    if (env is null) return;
+
+                    // força id do socket
+                    var data = env.Value.data with { idplayer = clientId };
+
+                    _players[clientId] = data;
+                    await BroadcastAllPlayersAsync(ct);
+                    return;
+                }
+
+                default:
+                    // tipo desconhecido -> ignore
+                    return;
+            }
         }
+
 
         // -------------------- Broadcasts --------------------
         private static async Task BroadcastAllPlayersAsync(CancellationToken ct)
