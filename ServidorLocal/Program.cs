@@ -79,13 +79,17 @@ namespace ServidorLocal
             var bytes = Encoding.UTF8.GetBytes(text);
             foreach (var kvp in _clients)
             {
+                Console.WriteLine($"a");
                 if (excludeClientId is not null && kvp.Key == excludeClientId)
                     continue;
+                Console.WriteLine($"b");
 
                 if (kvp.Value.State == WebSocketState.Open)
                 {
+                    Console.WriteLine($"c");
                     try { await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct); }
-                    catch { /* não derruba o broadcast */ }
+                    catch { /* não derruba o broadcast */Console.WriteLine($"erro"); }
+                    Console.WriteLine($"d");
                 }
             }
         }
@@ -280,7 +284,6 @@ namespace ServidorLocal
             {
                 case "skill":
                     {
-                        Console.WriteLine($"a");
                         // { type: "skill", data: { action, dx, dy } }
                         ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.SkillCastInput>? env = null;
                         try
@@ -290,12 +293,10 @@ namespace ServidorLocal
                         catch { /* ignore */ }
 
                         if (env is null) return;
-                        Console.WriteLine($"b");
                         var input = env.Value.data;
 
                         if (!IsValidSkillAction(input.action))
                             return;
-                        Console.WriteLine($"c");
                         var (dx, dy) = NormalizeSkillDirection
                             ? Normalize(input.dx, input.dy)
                             : (input.dx, input.dy);
@@ -307,10 +308,8 @@ namespace ServidorLocal
                             dy: dy,
                             tsUtcMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                         );
-                        Console.WriteLine($"d");
                         // Broadcast para todos, exceto o emissor
                         await BroadcastSkillAsync(skill, excludeClientId: clientId, ct);
-                        Console.WriteLine($"e");
                         return;
                     }
 
