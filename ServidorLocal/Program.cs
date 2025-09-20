@@ -261,6 +261,7 @@ namespace ServidorLocal
         // -------------------- Tratamento de texto --------------------
         private static async Task HandleTextMessageAsync(string clientId, string msg, CancellationToken ct)
         {
+            Console.WriteLine($"Text message: {msg}");
             // 1) Descobre o tipo
             ServidorLocal.Domain.EnvelopeTypeOnly head;
             try
@@ -279,58 +280,58 @@ namespace ServidorLocal
             switch (head.type.ToLowerInvariant())
             {
                 case "skill":
-                {
-                    // { type: "skill", data: { action, dx, dy } }
-                    ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.SkillCastInput>? env = null;
-                    try
                     {
-                        env = JsonSerializer.Deserialize<ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.SkillCastInput>>(msg, _json);
-                    }
-                    catch { /* ignore */ }
+                        // { type: "skill", data: { action, dx, dy } }
+                        ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.SkillCastInput>? env = null;
+                        try
+                        {
+                            env = JsonSerializer.Deserialize<ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.SkillCastInput>>(msg, _json);
+                        }
+                        catch { /* ignore */ }
 
-                    if (env is null) return;
+                        if (env is null) return;
 
-                    var input = env.Value.data;
+                        var input = env.Value.data;
 
-                    if (!IsValidSkillAction(input.action))
+                        if (!IsValidSkillAction(input.action))
+                            return;
+
+                        var (dx, dy) = NormalizeSkillDirection
+                            ? Normalize(input.dx, input.dy)
+                            : (input.dx, input.dy);
+
+                        var skill = new ServidorLocal.Domain.SkillCast(
+                            idplayer: clientId,
+                            action: input.action!.ToLowerInvariant(),
+                            dx: dx,
+                            dy: dy,
+                            tsUtcMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                        );
+
+                        // Broadcast para todos, exceto o emissor
+                        await BroadcastSkillAsync(skill, excludeClientId: clientId, ct);
                         return;
-
-                    var (dx, dy) = NormalizeSkillDirection
-                        ? Normalize(input.dx, input.dy)
-                        : (input.dx, input.dy);
-
-                    var skill = new ServidorLocal.Domain.SkillCast(
-                        idplayer: clientId,
-                        action: input.action!.ToLowerInvariant(),
-                        dx: dx,
-                        dy: dy,
-                        tsUtcMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                    );
-
-                    // Broadcast para todos, exceto o emissor
-                    await BroadcastSkillAsync(skill, excludeClientId: clientId, ct);
-                    return;
-                }
+                    }
 
                 case "player":
-                {
-                    // { type: "player", data: { posx, posy } }
-                    ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.PlayerData>? env = null;
-                    try
                     {
-                        env = JsonSerializer.Deserialize<ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.PlayerData>>(msg, _json);
+                        // { type: "player", data: { posx, posy } }
+                        ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.PlayerData>? env = null;
+                        try
+                        {
+                            env = JsonSerializer.Deserialize<ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.PlayerData>>(msg, _json);
+                        }
+                        catch { /* ignore */ }
+
+                        if (env is null) return;
+
+                        // força id do socket
+                        var data = env.Value.data with { idplayer = clientId };
+
+                        _players[clientId] = data;
+                        await BroadcastAllPlayersAsync(ct);
+                        return;
                     }
-                    catch { /* ignore */ }
-
-                    if (env is null) return;
-
-                    // força id do socket
-                    var data = env.Value.data with { idplayer = clientId };
-
-                    _players[clientId] = data;
-                    await BroadcastAllPlayersAsync(ct);
-                    return;
-                }
 
                 default:
                     // tipo desconhecido -> ignore
