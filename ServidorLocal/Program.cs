@@ -261,7 +261,6 @@ namespace ServidorLocal
         // -------------------- Tratamento de texto --------------------
         private static async Task HandleTextMessageAsync(string clientId, string msg, CancellationToken ct)
         {
-            Console.WriteLine($"Text message: {msg}");
             // 1) Descobre o tipo
             ServidorLocal.Domain.EnvelopeTypeOnly head;
             try
@@ -281,6 +280,7 @@ namespace ServidorLocal
             {
                 case "skill":
                     {
+                        Console.WriteLine($"a");
                         // { type: "skill", data: { action, dx, dy } }
                         ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.SkillCastInput>? env = null;
                         try
@@ -290,12 +290,12 @@ namespace ServidorLocal
                         catch { /* ignore */ }
 
                         if (env is null) return;
-
+                        Console.WriteLine($"b");
                         var input = env.Value.data;
 
                         if (!IsValidSkillAction(input.action))
                             return;
-
+                        Console.WriteLine($"c");
                         var (dx, dy) = NormalizeSkillDirection
                             ? Normalize(input.dx, input.dy)
                             : (input.dx, input.dy);
@@ -307,9 +307,10 @@ namespace ServidorLocal
                             dy: dy,
                             tsUtcMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                         );
-
+                        Console.WriteLine($"d");
                         // Broadcast para todos, exceto o emissor
                         await BroadcastSkillAsync(skill, excludeClientId: clientId, ct);
+                        Console.WriteLine($"e");
                         return;
                     }
 
