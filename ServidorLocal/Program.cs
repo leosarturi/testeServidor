@@ -4,9 +4,14 @@ using Microsoft.Extensions.Hosting;
 using ServidorLocal.Domain;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Linq;
 
 namespace ServidorLocal
 {
@@ -17,7 +22,6 @@ namespace ServidorLocal
         private static readonly ConcurrentDictionary<string, PlayerData> _players = new();
         private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
 
-        // eventos (opcionais)
         public static event Action<string>? OnPlayerConnected;
         public static event Action<string>? OnPlayerDisconnected;
 
@@ -26,28 +30,9 @@ namespace ServidorLocal
         {
             "aa", "s1", "s2"
         };
-
-        // Normalizar direção para vetor unitário?
         private const bool NormalizeSkillDirection = true;
 
-        // -------------------- Skill: parsing/validação/normalização --------------------
-        private static bool TryParseSkillInput(string msg, out SkillCastInput input)
-        {
-            try
-            {
-                var parsed = JsonSerializer.Deserialize<SkillCastInput?>(msg);
-                if (parsed is { } value)
-                {
-                    input = value;
-                    return true;
-                }
-            }
-            catch { /* ignore */ }
-
-            input = default;
-            return false;
-        }
-
+        // -------------------- Skill helpers --------------------
         private static bool IsValidSkillAction(string? action)
             => !string.IsNullOrWhiteSpace(action) && _validActions.Contains(action!);
 
@@ -61,42 +46,24 @@ namespace ServidorLocal
         // -------------------- Broadcasts de Skill --------------------
         private static async Task BroadcastSkillAsync(SkillCast skill, string excludeClientId, CancellationToken ct)
         {
-            var json = JsonSerializer.Serialize(new
+            var payload = new
             {
                 type = "skill",
-                data = new
+                data = new[]
                 {
-                    idplayer = skill.idplayer,
-                    action = skill.action,
-                    dir = new { x = skill.dx, y = skill.dy },
-                    ts = skill.tsUtcMs
+                    new
+                    {
+                        idplayer = skill.idplayer,
+                        action = skill.action,
+                        dir = new { x = skill.dx, y = skill.dy },
+                        ts = skill.tsUtcMs
+                    }
                 }
-            });
+            };
 
+            var json = JsonSerializer.Serialize(payload, _json);
             await BroadcastRawAsync(json, excludeClientId, ct);
         }
-
-        // Overload com exclusão do próprio emissor
-        private static async Task BroadcastRawAsync(string text, string? excludeClientId, CancellationToken ct)
-        {
-            var bytes = Encoding.UTF8.GetBytes(text);
-            foreach (var kvp in _clients)
-            {
-                Console.WriteLine($"a");
-                if (excludeClientId is not null && kvp.Key == excludeClientId)
-                    continue;
-                Console.WriteLine($"b");
-
-                if (kvp.Value.State == WebSocketState.Open)
-                {
-                    Console.WriteLine($"c");
-                    try { await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct); }
-                    catch { /* não derruba o broadcast */Console.WriteLine($"erro"); }
-                    Console.WriteLine($"d");
-                }
-            }
-        }
-
 
 
 
@@ -109,11 +76,9 @@ namespace ServidorLocal
             var app = builder.Build();
             app.UseWebSockets();
 
-            // logs básicos de eventos
             OnPlayerConnected += id => Console.WriteLine($"[Evento] Player conectado: {id}");
             OnPlayerDisconnected += id => Console.WriteLine($"[Evento] Player desconectado: {id}");
 
-            // endpoint websocket
             app.Map("/ws", HandleWebSocketAsync);
 
             app.Run();
@@ -122,8 +87,6 @@ namespace ServidorLocal
         // -------------------- Roteamento principal --------------------
         private static async Task HandleWebSocketAsync(HttpContext context)
         {
-            Console.WriteLine("Nova tentativa de conexão recebida...");
-
             if (!context.WebSockets.IsWebSocketRequest)
             {
                 context.Response.StatusCode = 400;
@@ -135,7 +98,6 @@ namespace ServidorLocal
             try
             {
                 socket = await context.WebSockets.AcceptWebSocketAsync();
-                Console.WriteLine("WebSocket aceito pelo servidor");
             }
             catch (Exception ex)
             {
@@ -145,21 +107,15 @@ namespace ServidorLocal
 
             var ct = context.RequestAborted;
 
-            // 1) obter clientId (primeira mensagem) ou gerar GUID
             var clientId = await ReceiveFirstMessageAsClientIdAsync(socket, ct);
             if (string.IsNullOrWhiteSpace(clientId))
                 clientId = Guid.NewGuid().ToString();
 
-            // 2) enviar de volta o UUID
             await SendClientIdAsync(socket, clientId, ct);
 
-            // 3) registrar cliente + avisar rede
             RegisterClient(clientId, socket);
             _ = BroadcastPlayerConnectedAsync(clientId, ct);
 
-            Console.WriteLine($"Cliente conectado com sucesso: {clientId}");
-
-            // 4) loop do cliente
             await HandleClientLoopAsync(socket, clientId, ct);
         }
 
@@ -174,7 +130,6 @@ namespace ServidorLocal
                     return string.Empty;
 
                 var initialMsg = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                Console.WriteLine($"Mensagem inicial recebida do cliente: '{initialMsg}'");
                 return initialMsg?.Trim() ?? string.Empty;
             }
             catch (Exception ex)
@@ -190,7 +145,6 @@ namespace ServidorLocal
             {
                 var idBytes = Encoding.UTF8.GetBytes(clientId);
                 await socket.SendAsync(idBytes, WebSocketMessageType.Text, true, ct);
-                Console.WriteLine($"UUID enviado para o cliente: {clientId}");
             }
             catch (Exception ex)
             {
@@ -212,15 +166,13 @@ namespace ServidorLocal
                 if (socket.State == WebSocketState.Open)
                     await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Fechando", ct);
             }
-            catch { /* ignore */ }
+            catch { }
 
             _clients.TryRemove(clientId, out _);
             _players.TryRemove(clientId, out _);
 
             OnPlayerDisconnected?.Invoke(clientId);
             _ = BroadcastPlayerDisconnectedAsync(clientId, ct);
-
-            Console.WriteLine($"Cliente desconectado: {clientId}");
         }
 
         // -------------------- Loop de mensagens --------------------
@@ -232,7 +184,6 @@ namespace ServidorLocal
             {
                 while (socket.State == WebSocketState.Open && !ct.IsCancellationRequested)
                 {
-                    // suporta mensagens fragmentadas
                     WebSocketReceiveResult result;
                     using var ms = new MemoryStream();
 
@@ -268,15 +219,13 @@ namespace ServidorLocal
         // -------------------- Tratamento de texto --------------------
         private static async Task HandleTextMessageAsync(string clientId, string msg, CancellationToken ct)
         {
-            // 1) Descobre o tipo
-            ServidorLocal.Domain.EnvelopeTypeOnly head;
+            EnvelopeTypeOnly head;
             try
             {
-                head = JsonSerializer.Deserialize<ServidorLocal.Domain.EnvelopeTypeOnly>(msg);
+                head = JsonSerializer.Deserialize<EnvelopeTypeOnly>(msg, _json);
             }
             catch
             {
-                // payload inválido
                 return;
             }
 
@@ -287,69 +236,72 @@ namespace ServidorLocal
             {
                 case "skill":
                     {
-                        // { type: "skill", data: { action, dx, dy } }
-                        ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.SkillCastInput>? env = null;
+                        // { type: "skill", data: [ { action, dx, dy }, ... ] }
+                        SocketEnvelope<List<SkillCastInput>>? env = null;
                         try
                         {
-                            env = JsonSerializer.Deserialize<ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.SkillCastInput>>(msg);
+                            env = JsonSerializer.Deserialize<SocketEnvelope<List<SkillCastInput>>>(msg, _json);
                         }
-                        catch { /* ignore */ }
+                        catch { }
 
-                        if (env is null) return;
-                        var input = env.Value.data;
+                        if (env is null || env.Value.data is null) return;
 
-                        if (!IsValidSkillAction(input.action))
-                            return;
-                        var (dx, dy) = NormalizeSkillDirection
-                            ? Normalize(input.dx, input.dy)
-                            : (input.dx, input.dy);
+                        foreach (var input in env.Value.data)
+                        {
+                            if (!IsValidSkillAction(input.action))
+                                continue;
 
-                        var skill = new ServidorLocal.Domain.SkillCast(
-                            idplayer: clientId,
-                            action: input.action!.ToLowerInvariant(),
-                            dx: dx,
-                            dy: dy,
-                            tsUtcMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                        );
-                        // Broadcast para todos, exceto o emissor
-                        await BroadcastSkillAsync(skill, excludeClientId: clientId, ct);
+                            var (dx, dy) = NormalizeSkillDirection
+                                ? Normalize(input.dx, input.dy)
+                                : (input.dx, input.dy);
+
+                            var skill = new SkillCast(
+                                idplayer: clientId,
+                                action: input.action!.ToLowerInvariant(),
+                                dx: dx,
+                                dy: dy,
+                                tsUtcMs: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                            );
+
+                            await BroadcastSkillAsync(skill, excludeClientId: clientId, ct);
+                        }
                         return;
                     }
 
                 case "player":
                     {
-                        // { type: "player", data: { posx, posy } }
-                        ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.PlayerData>? env = null;
+                        // { type: "player", data: [ { posx, posy }, ... ] }
+                        SocketEnvelope<List<PlayerData>>? env = null;
                         try
                         {
-                            env = JsonSerializer.Deserialize<ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.PlayerData>>(msg);
+                            env = JsonSerializer.Deserialize<SocketEnvelope<List<PlayerData>>>(msg, _json);
                         }
-                        catch { /* ignore */ }
+                        catch { }
 
-                        if (env is null) return;
+                        if (env is null || env.Value.data is null) return;
 
-                        // força id do socket
-                        var data = env.Value.data with { idplayer = clientId };
+                        foreach (var item in env.Value.data)
+                        {
+                            var coerced = item with { idplayer = clientId };
+                            _players[clientId] = coerced; // usa o último como estado atual
+                        }
 
-                        _players[clientId] = data;
                         await BroadcastAllPlayersAsync(ct);
                         return;
                     }
 
                 default:
-                    // tipo desconhecido -> ignore
                     return;
             }
         }
-
 
         // -------------------- Broadcasts --------------------
         private static async Task BroadcastAllPlayersAsync(CancellationToken ct)
         {
             try
             {
-                Console.WriteLine(_players.Count());
-                var data = JsonSerializer.Serialize(new { type = "player", data = _players.Values.ToList() });
+                var data = JsonSerializer.Serialize(
+                    new { type = "player", data = _players.Values.ToList() }, _json);
                 var bytes = Encoding.UTF8.GetBytes(data);
 
                 foreach (var kvp in _clients)
@@ -366,23 +318,28 @@ namespace ServidorLocal
 
         private static async Task BroadcastPlayerConnectedAsync(string clientId, CancellationToken ct)
         {
-            var message = JsonSerializer.Serialize(new { type = "connect", idplayer = clientId });
-            await BroadcastRawAsync(message, ct);
+            var message = JsonSerializer.Serialize(new { type = "connect", idplayer = clientId }, _json);
+            await BroadcastRawAsync(message, null, ct);
         }
 
         private static async Task BroadcastPlayerDisconnectedAsync(string clientId, CancellationToken ct)
         {
-            var message = JsonSerializer.Serialize(new { type = "disconnect", idplayer = clientId });
-            await BroadcastRawAsync(message, ct);
+            var message = JsonSerializer.Serialize(new { type = "disconnect", idplayer = clientId }, _json);
+            await BroadcastRawAsync(message, null, ct);
         }
 
-        private static async Task BroadcastRawAsync(string text, CancellationToken ct)
+
+        private static async Task BroadcastRawAsync(string text, string? excludeClientId, CancellationToken ct)
         {
             var bytes = Encoding.UTF8.GetBytes(text);
             foreach (var kvp in _clients)
             {
+                if (excludeClientId is not null && kvp.Key == excludeClientId) continue;
                 if (kvp.Value.State == WebSocketState.Open)
-                    await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+                {
+                    try { await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct); }
+                    catch { /* ignore */ }
+                }
             }
         }
     }
