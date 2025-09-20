@@ -35,7 +35,7 @@ namespace ServidorLocal
         {
             try
             {
-                var parsed = JsonSerializer.Deserialize<SkillCastInput?>(msg, _json);
+                var parsed = JsonSerializer.Deserialize<SkillCastInput?>(msg);
                 if (parsed is { } value)
                 {
                     input = value;
@@ -71,7 +71,7 @@ namespace ServidorLocal
                     dir = new { x = skill.dx, y = skill.dy },
                     ts = skill.tsUtcMs
                 }
-            }, _json);
+            });
 
             await BroadcastRawAsync(json, excludeClientId, ct);
         }
@@ -272,7 +272,7 @@ namespace ServidorLocal
             ServidorLocal.Domain.EnvelopeTypeOnly head;
             try
             {
-                head = JsonSerializer.Deserialize<ServidorLocal.Domain.EnvelopeTypeOnly>(msg, _json);
+                head = JsonSerializer.Deserialize<ServidorLocal.Domain.EnvelopeTypeOnly>(msg);
             }
             catch
             {
@@ -291,7 +291,7 @@ namespace ServidorLocal
                         ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.SkillCastInput>? env = null;
                         try
                         {
-                            env = JsonSerializer.Deserialize<ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.SkillCastInput>>(msg, _json);
+                            env = JsonSerializer.Deserialize<ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.SkillCastInput>>(msg);
                         }
                         catch { /* ignore */ }
 
@@ -322,7 +322,7 @@ namespace ServidorLocal
                         ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.PlayerData>? env = null;
                         try
                         {
-                            env = JsonSerializer.Deserialize<ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.PlayerData>>(msg, _json);
+                            env = JsonSerializer.Deserialize<ServidorLocal.Domain.SocketEnvelope<ServidorLocal.Domain.PlayerData>>(msg);
                         }
                         catch { /* ignore */ }
 
@@ -348,8 +348,8 @@ namespace ServidorLocal
         {
             try
             {
-
-                var data = JsonSerializer.Serialize(new { type = "player", data = _players.Values.ToList(), _json });
+                Console.WriteLine(_players.Count());
+                var data = JsonSerializer.Serialize(new { type = "player", data = _players.Values.ToList() });
                 var bytes = Encoding.UTF8.GetBytes(data);
 
                 foreach (var kvp in _clients)
@@ -366,13 +366,13 @@ namespace ServidorLocal
 
         private static async Task BroadcastPlayerConnectedAsync(string clientId, CancellationToken ct)
         {
-            var message = JsonSerializer.Serialize(new { type = "connect", idplayer = clientId }, _json);
+            var message = JsonSerializer.Serialize(new { type = "connect", idplayer = clientId });
             await BroadcastRawAsync(message, ct);
         }
 
         private static async Task BroadcastPlayerDisconnectedAsync(string clientId, CancellationToken ct)
         {
-            var message = JsonSerializer.Serialize(new { type = "disconnect", idplayer = clientId }, _json);
+            var message = JsonSerializer.Serialize(new { type = "disconnect", idplayer = clientId });
             await BroadcastRawAsync(message, ct);
         }
 
