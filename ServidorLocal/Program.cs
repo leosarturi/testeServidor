@@ -348,8 +348,8 @@ namespace ServidorLocal
         {
             try
             {
-                var allPlayersJson = JsonSerializer.Serialize(_players.Values, _json);
-                var data = JsonSerializer.Serialize(new { type = "player", data = allPlayersJson, _json });
+
+                var data = JsonSerializer.Serialize(new { type = "player", data = _players.Values.ToList(), _json });
                 var bytes = Encoding.UTF8.GetBytes(data);
 
                 foreach (var kvp in _clients)
