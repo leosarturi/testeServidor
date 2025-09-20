@@ -64,10 +64,13 @@ namespace ServidorLocal
             var json = JsonSerializer.Serialize(new
             {
                 type = "skill",
-                idplayer = skill.idplayer,
-                action = skill.action,
-                dir = new { x = skill.dx, y = skill.dy },
-                ts = skill.tsUtcMs
+                data = new
+                {
+                    idplayer = skill.idplayer,
+                    action = skill.action,
+                    dir = new { x = skill.dx, y = skill.dy },
+                    ts = skill.tsUtcMs
+                }
             }, _json);
 
             await BroadcastRawAsync(json, excludeClientId, ct);
@@ -346,7 +349,8 @@ namespace ServidorLocal
             try
             {
                 var allPlayersJson = JsonSerializer.Serialize(_players.Values, _json);
-                var bytes = Encoding.UTF8.GetBytes(allPlayersJson);
+                var data = JsonSerializer.Serialize(new { type = "player", data = allPlayersJson, _json });
+                var bytes = Encoding.UTF8.GetBytes(data);
 
                 foreach (var kvp in _clients)
                 {
