@@ -34,7 +34,7 @@ namespace ServidorLocal
             "s1",
             "s2"
         };
-        private const bool NormalizeSkillDirection = true;
+        private const bool NormalizeSkillDirection = false;
 
         // -------------------- Skill helpers --------------------
         private static bool IsValidSkillAction(string? action) =>
