@@ -304,6 +304,21 @@ namespace ServidorLocal
 
                         await BroadcastAllPlayersAsync(clientId, ct);
                         return;
+
+                    }
+                case "mob":
+                    {
+                        SocketEnvelope<List<MobData>>? env = null;
+                        try
+                        {
+                            env = JsonSerializer.Deserialize<SocketEnvelope<List<MobData>>>(msg);
+                        }
+                        catch { }
+
+                        if (env is null || env.Value.data is null) return;
+                        area1.Mobs = env.Value.data.ToArray();
+                        await BroadcastAllAsync(JsonSerializer.Serialize(msg), ct);
+                        return;
                     }
                 default:
                     return;
@@ -447,7 +462,7 @@ namespace ServidorLocal
             while (await timer.WaitForNextTickAsync(stop))
             {
                 // envie o delta ou o estado — aqui vou manter seu exemplo simples:
-                var data = new { type = "mob", data = area1.mobs };
+                var data = new { type = "mob", data = area1.Mobs };
                 var json = JsonSerializer.Serialize(data);
 
                 // IMPORTANTE: não passe "a" se não for um clientId válido
@@ -463,13 +478,13 @@ namespace ServidorLocal
         {
             // snapshot
             var snap = area1;
-            var current = snap.spawnedMob;
+            var current = snap.SpawnedMob;
             if (current >= MaxMobs) return;
 
             var toSpawn = Math.Min(MaxMobs - current, MaxPerTick);
 
             // garanta lista mutável
-            var list = (snap.mobs ?? Array.Empty<MobData>()).ToList();
+            var list = (snap.Mobs ?? Array.Empty<MobData>()).ToList();
 
             // gere os novos mobs
             for (int i = 0; i < toSpawn; i++)
@@ -486,13 +501,13 @@ namespace ServidorLocal
             // substitui o struct inteiro (record struct é imutável)
             area1 = snap with
             {
-                spawnedMob = snap.spawnedMob + toSpawn,
-                lastSpawnedTime = Environment.TickCount,
-                mobs = list.ToArray()
+                SpawnedMob = snap.SpawnedMob + toSpawn,
+                LastSpawnedTime = Environment.TickCount,
+                Mobs = list.ToArray()
             };
 
             // envie o delta ou o estado — aqui vou manter seu exemplo simples:
-            var data = new { type = "mob", data = area1.mobs };
+            var data = new { type = "mob", data = area1.Mobs };
             var json = JsonSerializer.Serialize(data);
 
 
