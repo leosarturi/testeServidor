@@ -24,6 +24,9 @@ namespace ServidorLocal
         private static readonly ConcurrentDictionary<string, string> _playersMap = new();
         private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
 
+        private static SpawnData area1 = new(0f, 0f, 0, 0, Array.Empty<MobData>());
+
+
         public static event Action<string>? OnPlayerConnected;
         public static event Action<string>? OnPlayerDisconnected;
 
@@ -80,6 +83,7 @@ namespace ServidorLocal
 
             OnPlayerConnected += id => Console.WriteLine($"[Evento] Player conectado: {id}");
             OnPlayerDisconnected += id => Console.WriteLine($"[Evento] Player desconectado: {id}");
+            _ = RunSpawnLoopAsync(app.Lifetime.ApplicationStopping);
 
             app.Map("/ws", HandleWebSocketAsync);
             app.Run();
@@ -393,6 +397,24 @@ namespace ServidorLocal
                 }
             }
         }
+
+        private static async Task BroadcastAllAsync(string text, CancellationToken ct)
+        {
+            var bytes = Encoding.UTF8.GetBytes(text);
+
+            foreach (var kvp in _clients)
+            {
+                if (kvp.Value.State == WebSocketState.Open)
+                {
+                    try
+                    {
+                        if (_playersMap[kvp.Key] != "mapa") return;
+                        await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+                    }
+                    catch { /* ignore */ }
+                }
+            }
+        }
         private static async Task BroadMapChangedAsync(string text, string? excludeClientId, string oldMap, CancellationToken ct)
         {
             var bytes = Encoding.UTF8.GetBytes(text);
@@ -412,5 +434,74 @@ namespace ServidorLocal
                 }
             }
         }
+
+        // --- config do loop ---
+        private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(200);
+        private const int MaxMobs = 50;
+        private const int MaxPerTick = 5;
+
+        // --- loop em background ---
+        private static async Task RunSpawnLoopAsync(CancellationToken stop)
+        {
+            using var timer = new PeriodicTimer(TickInterval);
+            while (await timer.WaitForNextTickAsync(stop))
+            {
+                // envie o delta ou o estado — aqui vou manter seu exemplo simples:
+                var data = new { type = "mob", data = area1.mobs };
+                var json = JsonSerializer.Serialize(data);
+
+                // IMPORTANTE: não passe "a" se não for um clientId válido
+                await BroadcastAllAsync(json, stop);
+                try { TickSpawn(stop); }
+                catch { /* log opcional */ }
+
+            }
+        }
+
+        // --- uma passada do loop ---
+        private static void TickSpawn(CancellationToken ct)
+        {
+            // snapshot
+            var snap = area1;
+            var current = snap.spawnedMob;
+            if (current >= MaxMobs) return;
+
+            var toSpawn = Math.Min(MaxMobs - current, MaxPerTick);
+
+            // garanta lista mutável
+            var list = (snap.mobs ?? Array.Empty<MobData>()).ToList();
+
+            // gere os novos mobs
+            for (int i = 0; i < toSpawn; i++)
+            {
+                var mob = new MobData(
+                    Guid.NewGuid().ToString(),
+                    Random.Shared.Next(50),
+                    Random.Shared.Next(50),
+                    5
+                );
+                list.Add(mob);
+            }
+
+            // substitui o struct inteiro (record struct é imutável)
+            area1 = snap with
+            {
+                spawnedMob = snap.spawnedMob + toSpawn,
+                lastSpawnedTime = Environment.TickCount,
+                mobs = list.ToArray()
+            };
+
+            // envie o delta ou o estado — aqui vou manter seu exemplo simples:
+            var data = new { type = "mob", data = area1.mobs };
+            var json = JsonSerializer.Serialize(data);
+
+
+        }
+
     }
+
 }
+
+
+
+
