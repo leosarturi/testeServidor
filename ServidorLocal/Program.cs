@@ -116,7 +116,7 @@ namespace ServidorLocal
                 clientId = Guid.NewGuid().ToString();
 
             await SendClientIdAsync(socket, clientId, ct);
-            await RegisterClient(clientId, socket, ct);
+            RegisterClient(clientId, socket, ct);
             await ChangeMap(clientId, "cidade", ct);
             _ = BroadcastPlayerConnectedAsync(clientId, ct);
             await HandleClientLoopAsync(socket, clientId, ct);
@@ -168,11 +168,10 @@ namespace ServidorLocal
         }
 
         // -------------------- Registro / limpeza --------------------
-        private static async Task RegisterClient(string clientId, WebSocket socket, CancellationToken ct)
+        private static void RegisterClient(string clientId, WebSocket socket, CancellationToken ct)
         {
             _clients[clientId] = socket;
             OnPlayerConnected?.Invoke(clientId);
-            await BroadcastPlayerConnectedAsync(clientId, ct);
         }
 
         private static async Task SafeCloseAndCleanupAsync(string clientId, WebSocket socket, CancellationToken ct)
