@@ -117,8 +117,8 @@ namespace ServidorLocal
 
             await SendClientIdAsync(socket, clientId, ct);
             await RegisterClient(clientId, socket, ct);
-            _ = BroadcastPlayerConnectedAsync(clientId, ct);
             await ChangeMap(clientId, "cidade", ct);
+            _ = BroadcastPlayerConnectedAsync(clientId, ct);
             await HandleClientLoopAsync(socket, clientId, ct);
         }
 
@@ -362,13 +362,13 @@ namespace ServidorLocal
 
         private static async Task BroadcastPlayerConnectedAsync(string clientId, CancellationToken ct)
         {
-            var message = JsonSerializer.Serialize(new { type = "connect", idplayer = clientId });
-            var bytes = Encoding.UTF8.GetBytes(message);
+
 
             foreach (var kvp in _clients)
             {
-
-                if (_playersMap[kvp.Key] != _playersMap[clientId]) continue;
+                var message = JsonSerializer.Serialize(new { type = "connect", idplayer = kvp.Key });
+                var bytes = Encoding.UTF8.GetBytes(message);
+                if (_playersMap[kvp.Key] != _playersMap[clientId] || kvp.Key == clientId) continue;
 
                 if (kvp.Value.State == WebSocketState.Open)
                 {
