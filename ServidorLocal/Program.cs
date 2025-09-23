@@ -365,9 +365,9 @@ namespace ServidorLocal
 
             foreach (var kvp in _clients)
             {
+                Console.WriteLine($"Client online: {kvp.Key}");
                 var message = JsonSerializer.Serialize(new { type = "connect", idplayer = kvp.Key });
                 var bytes = Encoding.UTF8.GetBytes(message);
-                if (_playersMap[kvp.Key] != _playersMap[clientId] || kvp.Key == clientId) continue;
 
                 if (kvp.Value.State == WebSocketState.Open)
                 {
