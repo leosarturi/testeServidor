@@ -367,6 +367,7 @@ namespace ServidorLocal
             {
                 foreach (var clientToBroadcast in _clients)
                 {
+                    if (_playersMap[kvp.Key] != _playersMap[clientToBroadcast.Key]) continue;
                     Console.WriteLine($"Client online: {clientToBroadcast.Key}");
                     var message = JsonSerializer.Serialize(new { type = "connect", idplayer = clientToBroadcast.Key });
                     var bytes = Encoding.UTF8.GetBytes(message);
@@ -394,9 +395,7 @@ namespace ServidorLocal
             var message = JsonSerializer.Serialize(new { type = "disconnect", idplayer = clientId });
             if (oldMap == null) return;
             await BroadMapChangedAsync(message, clientId, oldMap, ct);
-
-            message = JsonSerializer.Serialize(new { type = "connect", idplayer = clientId });
-            await BroadMapChangedAsync(message, clientId, _playersMap[clientId], ct);
+            await BroadcastPlayerConnectedAsync(clientId, ct);
         }
 
         private static async Task BroadcastRawAsync(string text, string? excludeClientId, CancellationToken ct)
