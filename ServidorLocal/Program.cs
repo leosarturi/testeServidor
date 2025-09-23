@@ -317,7 +317,7 @@ namespace ServidorLocal
 
                         if (env is null || env.Value.data is null) return;
                         area1.Mobs = env.Value.data.ToArray();
-                        await BroadcastAllAsync(JsonSerializer.Serialize(msg), ct);
+                        //await BroadcastAllAsync(JsonSerializer.Serialize(msg), ct);
                         return;
                     }
                 default:

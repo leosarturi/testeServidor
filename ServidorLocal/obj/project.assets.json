@@ -8,19 +8,19 @@
     "net9.0": []
   },
   "packageFolders": {
-    "C:\\Users\\gusmo\\.nuget\\packages\\": {}
+    "C:\\Users\\sartu\\.nuget\\packages\\": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\gusmo\\Documents\\GitHub\\testeServidor\\ServidorLocal\\ServidorLocal.csproj",
+      "projectUniqueName": "C:\\Users\\sartu\\OneDrive\\Desktop\\rpgprofessor\\ServidorLocal\\ServidorLocal.csproj",
       "projectName": "ServidorLocal",
-      "projectPath": "C:\\Users\\gusmo\\Documents\\GitHub\\testeServidor\\ServidorLocal\\ServidorLocal.csproj",
-      "packagesPath": "C:\\Users\\gusmo\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\gusmo\\Documents\\GitHub\\testeServidor\\ServidorLocal\\obj\\",
+      "projectPath": "C:\\Users\\sartu\\OneDrive\\Desktop\\rpgprofessor\\ServidorLocal\\ServidorLocal.csproj",
+      "packagesPath": "C:\\Users\\sartu\\.nuget\\packages\\",
+      "outputPath": "C:\\Users\\sartu\\OneDrive\\Desktop\\rpgprofessor\\ServidorLocal\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "C:\\Users\\gusmo\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        "C:\\Users\\sartu\\AppData\\Roaming\\NuGet\\NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net9.0"
@@ -68,7 +68,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.305/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.300/PortableRuntimeIdentifierGraph.json"
       }
     }
   }
