@@ -394,6 +394,9 @@ namespace ServidorLocal
             var message = JsonSerializer.Serialize(new { type = "disconnect", idplayer = clientId });
             if (oldMap == null) return;
             await BroadMapChangedAsync(message, clientId, oldMap, ct);
+
+            message = JsonSerializer.Serialize(new { type = "connect", idplayer = clientId });
+            await BroadMapChangedAsync(message, clientId, _playersMap[clientId], ct);
         }
 
         private static async Task BroadcastRawAsync(string text, string? excludeClientId, CancellationToken ct)
