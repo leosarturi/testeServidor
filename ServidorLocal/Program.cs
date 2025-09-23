@@ -365,17 +365,20 @@ namespace ServidorLocal
 
             foreach (var kvp in _clients)
             {
-                Console.WriteLine($"Client online: {kvp.Key}");
-                var message = JsonSerializer.Serialize(new { type = "connect", idplayer = kvp.Key });
-                var bytes = Encoding.UTF8.GetBytes(message);
-
-                if (kvp.Value.State == WebSocketState.Open)
+                foreach (var clientToBroadcast in _clients)
                 {
-                    try
+                    Console.WriteLine($"Client online: {clientToBroadcast.Key}");
+                    var message = JsonSerializer.Serialize(new { type = "connect", idplayer = clientToBroadcast.Key });
+                    var bytes = Encoding.UTF8.GetBytes(message);
+
+                    if (kvp.Value.State == WebSocketState.Open)
                     {
-                        await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+                        try
+                        {
+                            await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+                        }
+                        catch { /* ignore */ }
                     }
-                    catch { /* ignore */ }
                 }
             }
 
