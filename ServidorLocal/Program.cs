@@ -119,19 +119,27 @@ namespace ServidorLocal
             RegisterClient(clientId, socket);
             _ = BroadcastPlayerConnectedAsync(clientId, ct);
             await ChangeMap(clientId, "cidade", ct);
+            await BroadcastPlayersOfMapAsync("cidade", ct);
             await HandleClientLoopAsync(socket, clientId, ct);
+
         }
 
         private static async Task ChangeMap(string clientId, string map, CancellationToken ct)
         {
-            if (clientId == "" || map == "") return;
+            if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(map)) return;
+
             _playersMap.TryGetValue(clientId, out var oldMap);
+            Console.WriteLine($"Cliente {clientId} trocou de '{oldMap}' para '{map}'");
 
-            Console.WriteLine($"Cliente : {clientId} trocou de {oldMap} para {map}");
             _playersMap[clientId] = map;
-            await BroadcastPlayerChangedMapAsync(clientId, oldMap, ct);
 
+            // Atualiza a foto do mapa antigo (alguém saiu) e do novo mapa (alguém entrou)
+            if (!string.IsNullOrEmpty(oldMap))
+                await BroadcastPlayersOfMapAsync(oldMap, ct);
+
+            await BroadcastPlayersOfMapAsync(map, ct);
         }
+
         // -------------------- Handshake --------------------
         private static async Task<string> ReceiveFirstMessageAsClientIdAsync(WebSocket socket, CancellationToken ct)
         {
@@ -430,6 +438,38 @@ namespace ServidorLocal
                 }
             }
         }
+
+        private static async Task BroadcastPlayersOfMapAsync(string map, CancellationToken ct)
+        {
+            try
+            {
+                var playersOfMap = _players.Values
+                    .Where(p => _playersMap.TryGetValue(p.idplayer, out var m) && m == map)
+                    .ToList();
+
+                var message = JsonSerializer.Serialize(new
+                {
+                    type = "trocar_mapa",
+                    data = playersOfMap
+                }, _json);
+
+                var bytes = Encoding.UTF8.GetBytes(message);
+
+                foreach (var kvp in _clients)
+                {
+                    if (_playersMap.TryGetValue(kvp.Key, out var cm) && cm == map && kvp.Value.State == WebSocketState.Open)
+                    {
+                        try { await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct); }
+                        catch { /* ignore */ }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Erro no broadcast de players do mapa '{map}': {ex.Message}");
+            }
+        }
+
         private static async Task BroadMapChangedAsync(string text, string? excludeClientId, string oldMap, CancellationToken ct)
         {
             var bytes = Encoding.UTF8.GetBytes(text);
@@ -512,6 +552,8 @@ namespace ServidorLocal
 
 
         }
+
+
 
     }
 
