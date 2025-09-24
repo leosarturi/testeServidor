@@ -368,21 +368,23 @@ namespace ServidorLocal
 
         private static async Task BroadcastPlayerConnectedAsync(string clientId, CancellationToken ct)
         {
-            var message = JsonSerializer.Serialize(new { type = "connect", idplayer = clientId });
-            var bytes = Encoding.UTF8.GetBytes(message);
+
 
             foreach (var kvp in _clients)
             {
-
-                if (_playersMap[kvp.Key] != _playersMap[clientId]) continue;
-
-                if (kvp.Value.State == WebSocketState.Open)
+                foreach (var pToSend in _clients)
                 {
-                    try
+                    var message = JsonSerializer.Serialize(new { type = "connect", idplayer = pToSend.Key });
+                    var bytes = Encoding.UTF8.GetBytes(message);
+
+                    if (kvp.Value.State == WebSocketState.Open)
                     {
-                        await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+                        try
+                        {
+                            await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+                        }
+                        catch { /* ignore */ }
                     }
-                    catch { /* ignore */ }
                 }
             }
 
