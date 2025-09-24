@@ -374,6 +374,7 @@ namespace ServidorLocal
             {
                 foreach (var pToSend in _clients)
                 {
+                    Console.WriteLine($"Cliente {clientId} conectou enviando para {pToSend}");
                     var message = JsonSerializer.Serialize(new { type = "connect", idplayer = pToSend.Key });
                     var bytes = Encoding.UTF8.GetBytes(message);
 
