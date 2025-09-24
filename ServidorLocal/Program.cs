@@ -129,7 +129,8 @@ namespace ServidorLocal
 
             _playersMap.TryGetValue(clientId, out var oldMap);
             Console.WriteLine($"Cliente {clientId} trocou de '{oldMap}' para '{map}'");
-
+            var player = _players[clientId];
+            _players.TryUpdate(clientId, new PlayerData(player.idplayer, player.posx, player.posy, map), player);
             _playersMap[clientId] = map;
 
             // Atualiza a foto do mapa antigo (alguém saiu) e do novo mapa (alguém entrou)
