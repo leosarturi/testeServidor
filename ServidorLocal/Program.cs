@@ -119,7 +119,6 @@ namespace ServidorLocal
             RegisterClient(clientId, socket);
             _ = BroadcastPlayerConnectedAsync(clientId, ct);
             await ChangeMap(clientId, "cidade", ct);
-            await BroadcastPlayersOfMapAsync("cidade", ct);
             await HandleClientLoopAsync(socket, clientId, ct);
 
         }
