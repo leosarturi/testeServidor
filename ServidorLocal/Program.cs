@@ -179,6 +179,7 @@ namespace ServidorLocal
         private static void RegisterClient(string clientId, WebSocket socket)
         {
             _clients[clientId] = socket;
+            _players.TryAdd(clientId, new PlayerData(clientId, 0, 0, "cidade"));
             OnPlayerConnected?.Invoke(clientId);
         }
 
