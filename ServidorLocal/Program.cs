@@ -349,9 +349,7 @@ namespace ServidorLocal
                             new
                             {
                                 type = "player",
-                                data = _players.Values
-                                    .Where(p => _playersMap.TryGetValue(p.idplayer, out var map) && map == _playersMap[kvp.Key])
-                                    .ToList()
+                                data = _players.Values.ToList()
                             },
                             _json
                         );
