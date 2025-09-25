@@ -133,6 +133,15 @@ namespace ServidorLocal
             _players.TryUpdate(clientId, new PlayerData(player.idplayer, player.posx, player.posy, map), player);
             _playersMap[clientId] = map;
 
+            if (map == area1.Mapa)
+            {
+                var data = new { type = "mob", data = area1.Mobs, map = area1.Mapa };
+                var json = JsonSerializer.Serialize(data);
+
+                // IMPORTANTE: não passe "a" se não for um clientId válido
+                await BroadcastAllAsync(json, area1.Mapa, ct);
+            }
+
             // Atualiza a foto do mapa antigo (alguém saiu) e do novo mapa (alguém entrou)
             if (!string.IsNullOrEmpty(oldMap))
                 await BroadcastPlayersOfMapAsync(oldMap, ct);
