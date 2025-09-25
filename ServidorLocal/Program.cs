@@ -24,7 +24,7 @@ namespace ServidorLocal
         private static readonly ConcurrentDictionary<string, string> _playersMap = new();
         private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
 
-        private static SpawnData area1 = new(0f, 0f, 0, 0, Array.Empty<MobData>());
+        private static SpawnData area1 = new(0f, 0f, 0, 0, Array.Empty<MobData>(), "mapa");
 
 
         public static event Action<string>? OnPlayerConnected;
@@ -326,7 +326,6 @@ namespace ServidorLocal
 
                         if (env is null || env.Value.data is null) return;
                         area1.Mobs = env.Value.data.ToArray();
-                        await BroadcastAllAsync(JsonSerializer.Serialize(msg), ct);
                         return;
                     }
                 default:
@@ -423,14 +422,16 @@ namespace ServidorLocal
             }
         }
 
-        private static async Task BroadcastAllAsync(string text, CancellationToken ct)
+        private static async Task BroadcastAllAsync(string text, string map, CancellationToken ct)
         {
             var bytes = Encoding.UTF8.GetBytes(text);
 
             foreach (var kvp in _clients)
             {
+
                 if (kvp.Value.State == WebSocketState.Open)
                 {
+                    if (_playersMap[kvp.Key] != map) return;
                     try
                     {
                         if (_playersMap[kvp.Key] != "mapa") return;
@@ -508,7 +509,7 @@ namespace ServidorLocal
                 var json = JsonSerializer.Serialize(data);
 
                 // IMPORTANTE: não passe "a" se não for um clientId válido
-                await BroadcastAllAsync(json, stop);
+                await BroadcastAllAsync(json, area1.Mapa, stop);
                 try { TickSpawn(stop); }
                 catch { /* log opcional */ }
 
