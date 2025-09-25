@@ -505,7 +505,7 @@ namespace ServidorLocal
             while (await timer.WaitForNextTickAsync(stop))
             {
                 // envie o delta ou o estado — aqui vou manter seu exemplo simples:
-                var data = new { type = "mob", data = area1.Mobs };
+                var data = new { type = "mob", data = area1.Mobs, map = area1.Mapa };
                 var json = JsonSerializer.Serialize(data);
 
                 // IMPORTANTE: não passe "a" se não for um clientId válido
