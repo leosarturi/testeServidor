@@ -434,7 +434,6 @@ namespace ServidorLocal
                     if (_playersMap[kvp.Key] != map) return;
                     try
                     {
-                        if (_playersMap[kvp.Key] != "mapa") return;
                         await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
                     }
                     catch { /* ignore */ }
