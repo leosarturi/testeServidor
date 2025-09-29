@@ -118,7 +118,7 @@ namespace ServidorLocal
             await SendClientIdAsync(socket, clientId, ct);
             RegisterClient(clientId, socket);
             await BroadcastPlayerConnectedAsync(clientId, ct);
-            await ChangeMap(clientId, "cidade", ct);
+            //  await ChangeMap(clientId, "cidade", ct);
             await HandleClientLoopAsync(socket, clientId, ct);
 
         }
@@ -130,7 +130,7 @@ namespace ServidorLocal
             _playersMap.TryGetValue(clientId, out var oldMap);
             Console.WriteLine($"Cliente {clientId} trocou de '{oldMap}' para '{map}'");
             var player = _players[clientId];
-            _players.TryUpdate(clientId, new PlayerData(player.idplayer, player.posx, player.posy, map), player);
+            _players.TryUpdate(clientId, new PlayerData(player.idplayer, player.posx, player.posy, map, player.status), player);
             _playersMap[clientId] = map;
 
 
@@ -190,7 +190,8 @@ namespace ServidorLocal
         private static void RegisterClient(string clientId, WebSocket socket)
         {
             _clients[clientId] = socket;
-            _players.TryAdd(clientId, new PlayerData(clientId, 0, 0, "cidade"));
+            //  _players.TryAdd(clientId, new PlayerData(clientId, 0, 0, "cidade", new PlayerStatus(100, 100)));
+            _playersMap.TryAdd(clientId, "cidade");
             OnPlayerConnected?.Invoke(clientId);
         }
 
@@ -319,7 +320,14 @@ namespace ServidorLocal
                         foreach (var item in env.Value.data)
                         {
                             var coerced = item with { idplayer = clientId };
-                            _players[clientId] = coerced;
+                            _players.AddOrUpdate(
+    coerced.idplayer,          // chave
+    coerced,                   // valor a adicionar se não existir
+    (key, oldValue) => coerced // valor a atualizar se já existir
+);
+                            Console.WriteLine(_players[item.idplayer]);
+
+
                         }
 
                         await BroadcastAllPlayersAsync(clientId, ct);
