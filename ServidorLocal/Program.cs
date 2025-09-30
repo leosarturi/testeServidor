@@ -432,7 +432,7 @@ namespace ServidorLocal
 
         private static async Task BroadcastPlayerDisconnectedAsync(string clientId, CancellationToken ct)
         {
-            var message = JsonSerializer.Serialize(new { type = "disconnect", idplayer = clientId });
+            var message = JsonSerializer.Serialize(new { type = "disconnect", data = _players[clientId] });
             await BroadcastRawAsync(message, null, ct);
         }
         private static async Task BroadcastPlayerChangedMapAsync(string clientId, string? oldMap, CancellationToken ct)
