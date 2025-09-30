@@ -412,8 +412,8 @@ namespace ServidorLocal
             {
                 foreach (var pToSend in _clients)
                 {
-                    Console.WriteLine($"Cliente {clientId} conectou enviando para {pToSend}");
-                    var message = JsonSerializer.Serialize(new { type = "connect", data = clientId });
+                    Console.WriteLine($"Cliente {kvp.Key} conectou enviando para {pToSend}");
+                    var message = JsonSerializer.Serialize(new { type = "connect", data = _players[pToSend.Key] });
                     var bytes = Encoding.UTF8.GetBytes(message);
 
                     if (kvp.Value.State == WebSocketState.Open)
