@@ -114,12 +114,11 @@ namespace ServidorLocal
             var clientId = await ReceiveFirstMessageAsync(socket, ct);
             if (clientId == null) return;
 
-            var newClientId = Guid.NewGuid().ToString();
-            await SendClientIdAsync(socket, newClientId, ct);
+            await SendClientIdAsync(socket, clientId.Value.idplayer, ct);
             RegisterClient((PlayerData)clientId, socket);
             await BroadcastPlayerConnectedAsync((PlayerData)clientId, ct);
             //  await ChangeMap(clientId, "cidade", ct);
-            await HandleClientLoopAsync(socket, newClientId, ct);
+            await HandleClientLoopAsync(socket, clientId.Value.idplayer, ct);
 
 
 
