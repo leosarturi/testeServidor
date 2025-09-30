@@ -111,15 +111,27 @@ namespace ServidorLocal
             }
 
             var ct = context.RequestAborted;
-            var clientId = await ReceiveFirstMessageAsClientIdAsync(socket, ct);
-            if (string.IsNullOrWhiteSpace(clientId))
-                clientId = Guid.NewGuid().ToString();
+            var clientId = await ReceiveFirstMessageAsync(socket, ct);
+            if (clientId == null || string.IsNullOrWhiteSpace(clientId.ClientId))
+            {
+                var newClientId = Guid.NewGuid().ToString();
+                await SendClientIdAsync(socket, newClientId, ct);
+                RegisterClient(newClientId, socket);
+                await BroadcastPlayerConnectedAsync(newClientId, clientId?.Classe ?? "mago", ct);
+                //  await ChangeMap(clientId, "cidade", ct);
+                await HandleClientLoopAsync(socket, newClientId, ct);
+            }
+            else
+            {
+                await SendClientIdAsync(socket, clientId.ClientId, ct);
+                RegisterClient(clientId.ClientId, socket);
+                await BroadcastPlayerConnectedAsync(clientId.ClientId, clientId.Classe, ct);
+                //  await ChangeMap(clientId, "cidade", ct);
+                await HandleClientLoopAsync(socket, clientId.ClientId, ct);
+            }
 
-            await SendClientIdAsync(socket, clientId, ct);
-            RegisterClient(clientId, socket);
-            await BroadcastPlayerConnectedAsync(clientId, ct);
-            //  await ChangeMap(clientId, "cidade", ct);
-            await HandleClientLoopAsync(socket, clientId, ct);
+
+
 
         }
 
@@ -152,24 +164,29 @@ namespace ServidorLocal
         }
 
         // -------------------- Handshake --------------------
-        private static async Task<string> ReceiveFirstMessageAsClientIdAsync(WebSocket socket, CancellationToken ct)
+        private static async Task<InitMessage?> ReceiveFirstMessageAsync(WebSocket socket, CancellationToken ct)
         {
             var buffer = new byte[1024];
+
             try
             {
                 var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
                 if (result.MessageType == WebSocketMessageType.Close)
-                    return string.Empty;
+                    return null;
 
                 var initialMsg = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                return initialMsg?.Trim() ?? string.Empty;
+
+                // Desserializa JSON
+                var initData = System.Text.Json.JsonSerializer.Deserialize<InitMessage>(initialMsg);
+                return initData;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Erro recebendo mensagem inicial: {ex.Message}");
-                return string.Empty;
+                return null;
             }
         }
+
 
         private static async Task SendClientIdAsync(WebSocket socket, string clientId, CancellationToken ct)
         {
@@ -384,7 +401,7 @@ namespace ServidorLocal
             }
         }
 
-        private static async Task BroadcastPlayerConnectedAsync(string clientId, CancellationToken ct)
+        private static async Task BroadcastPlayerConnectedAsync(string clientId, string classe, CancellationToken ct)
         {
 
 
@@ -393,7 +410,7 @@ namespace ServidorLocal
                 foreach (var pToSend in _clients)
                 {
                     Console.WriteLine($"Cliente {clientId} conectou enviando para {pToSend}");
-                    var message = JsonSerializer.Serialize(new { type = "connect", idplayer = pToSend.Key });
+                    var message = JsonSerializer.Serialize(new { type = "connect", idplayer = pToSend.Key, classe = classe });
                     var bytes = Encoding.UTF8.GetBytes(message);
 
                     if (kvp.Value.State == WebSocketState.Open)
@@ -582,4 +599,9 @@ namespace ServidorLocal
 
 
 
+public class InitMessage
+{
+    public required string ClientId { get; set; }
+    public required string Classe { get; set; }
+}
 

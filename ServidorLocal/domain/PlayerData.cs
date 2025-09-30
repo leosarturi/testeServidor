@@ -12,5 +12,6 @@ public readonly record struct PlayerData(
 
 public readonly record struct PlayerStatus(
     int vida,        // Vida atual do jogador
-    int vidamax   // Vida máxima
+    int vidamax,   // Vida máxima
+    string classe
 );
