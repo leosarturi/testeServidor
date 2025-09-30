@@ -167,18 +167,30 @@ namespace ServidorLocal
         private static async Task<InitMessage?> ReceiveFirstMessageAsync(WebSocket socket, CancellationToken ct)
         {
             var buffer = new byte[1024];
-
+            using var ms = new MemoryStream();
             try
             {
-                var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
-                if (result.MessageType == WebSocketMessageType.Close)
-                    return null;
 
-                var initialMsg = Encoding.UTF8.GetString(buffer, 0, result.Count);
 
-                // Desserializa JSON
-                var initData = System.Text.Json.JsonSerializer.Deserialize<InitMessage>(initialMsg);
+                WebSocketReceiveResult result;
+                do
+                {
+                    result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
+                    Console.WriteLine($"Received first message: {result.Count}");
+                    Console.WriteLine($"Received first message: {result.EndOfMessage}");
+                    if (result.MessageType == WebSocketMessageType.Close)
+                        return null;
+
+                    ms.Write(buffer, 0, result.Count);
+                }
+                while (!result.EndOfMessage);
+
+                var msg = Encoding.UTF8.GetString(ms.ToArray());
+                Console.WriteLine($"{msg}");
+                var initData = JsonSerializer.Deserialize<InitMessage>(msg);
+                Console.WriteLine($"ClientId = {initData.ClientId}, Classe = {initData.Classe}");
                 return initData;
+
             }
             catch (Exception ex)
             {
@@ -342,7 +354,7 @@ namespace ServidorLocal
     coerced,                   // valor a adicionar se não existir
     (key, oldValue) => coerced // valor a atualizar se já existir
 );
-                            Console.WriteLine(_players[item.idplayer]);
+
 
 
                         }
