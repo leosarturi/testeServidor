@@ -112,23 +112,16 @@ namespace ServidorLocal
 
             var ct = context.RequestAborted;
             var clientId = await ReceiveFirstMessageAsync(socket, ct);
-            if (clientId == null || string.IsNullOrWhiteSpace(clientId.ClientId))
-            {
-                var newClientId = Guid.NewGuid().ToString();
-                await SendClientIdAsync(socket, newClientId, ct);
-                RegisterClient(newClientId, socket);
-                await BroadcastPlayerConnectedAsync(newClientId, clientId?.Classe ?? "mago", ct);
-                //  await ChangeMap(clientId, "cidade", ct);
-                await HandleClientLoopAsync(socket, newClientId, ct);
-            }
-            else
-            {
-                await SendClientIdAsync(socket, clientId.ClientId, ct);
-                RegisterClient(clientId.ClientId, socket);
-                await BroadcastPlayerConnectedAsync(clientId.ClientId, clientId.Classe, ct);
-                //  await ChangeMap(clientId, "cidade", ct);
-                await HandleClientLoopAsync(socket, clientId.ClientId, ct);
-            }
+            if (clientId == null) return;
+
+            var newClientId = Guid.NewGuid().ToString();
+            await SendClientIdAsync(socket, newClientId, ct);
+            RegisterClient((PlayerData)clientId, socket);
+            await BroadcastPlayerConnectedAsync((PlayerData)clientId, ct);
+            //  await ChangeMap(clientId, "cidade", ct);
+            await HandleClientLoopAsync(socket, newClientId, ct);
+
+
 
 
 
@@ -164,7 +157,7 @@ namespace ServidorLocal
         }
 
         // -------------------- Handshake --------------------
-        private static async Task<InitMessage?> ReceiveFirstMessageAsync(WebSocket socket, CancellationToken ct)
+        private static async Task<PlayerData?> ReceiveFirstMessageAsync(WebSocket socket, CancellationToken ct)
         {
             var buffer = new byte[1024];
             using var ms = new MemoryStream();
@@ -187,8 +180,7 @@ namespace ServidorLocal
 
                 var msg = Encoding.UTF8.GetString(ms.ToArray());
                 Console.WriteLine($"{msg}");
-                var initData = JsonSerializer.Deserialize<InitMessage>(msg);
-                Console.WriteLine($"ClientId = {initData.ClientId}, Classe = {initData.Classe}");
+                var initData = JsonSerializer.Deserialize<PlayerData>(msg);
                 return initData;
 
             }
@@ -216,12 +208,12 @@ namespace ServidorLocal
         }
 
         // -------------------- Registro / limpeza --------------------
-        private static void RegisterClient(string clientId, WebSocket socket)
+        private static void RegisterClient(PlayerData clientId, WebSocket socket)
         {
-            _clients[clientId] = socket;
-            //  _players.TryAdd(clientId, new PlayerData(clientId, 0, 0, "cidade", new PlayerStatus(100, 100)));
-            _playersMap.TryAdd(clientId, "cidade");
-            OnPlayerConnected?.Invoke(clientId);
+            _clients[clientId.idplayer] = socket;
+            _players.TryAdd(clientId.idplayer, clientId);
+            _playersMap.TryAdd(clientId.idplayer, "cidade");
+            OnPlayerConnected?.Invoke(clientId.idplayer);
         }
 
         private static async Task SafeCloseAndCleanupAsync(string clientId, WebSocket socket, CancellationToken ct)
@@ -413,7 +405,7 @@ namespace ServidorLocal
             }
         }
 
-        private static async Task BroadcastPlayerConnectedAsync(string clientId, string classe, CancellationToken ct)
+        private static async Task BroadcastPlayerConnectedAsync(PlayerData clientId, CancellationToken ct)
         {
 
 
@@ -422,7 +414,7 @@ namespace ServidorLocal
                 foreach (var pToSend in _clients)
                 {
                     Console.WriteLine($"Cliente {clientId} conectou enviando para {pToSend}");
-                    var message = JsonSerializer.Serialize(new { type = "connect", idplayer = pToSend.Key, classe = classe });
+                    var message = JsonSerializer.Serialize(new { type = "connect", data = clientId });
                     var bytes = Encoding.UTF8.GetBytes(message);
 
                     if (kvp.Value.State == WebSocketState.Open)
