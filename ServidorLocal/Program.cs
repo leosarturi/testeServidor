@@ -225,9 +225,10 @@ namespace ServidorLocal
             catch { }
 
             _clients.TryRemove(clientId, out _);
+            var dataTosend = _players[clientId];
             _players.TryRemove(clientId, out _);
             OnPlayerDisconnected?.Invoke(clientId);
-            _ = BroadcastPlayerDisconnectedAsync(clientId, ct);
+            _ = BroadcastPlayerDisconnectedAsync(dataTosend, ct);
         }
 
         // -------------------- Loop de mensagens --------------------
@@ -429,9 +430,9 @@ namespace ServidorLocal
 
         }
 
-        private static async Task BroadcastPlayerDisconnectedAsync(string clientId, CancellationToken ct)
+        private static async Task BroadcastPlayerDisconnectedAsync(PlayerData clientId, CancellationToken ct)
         {
-            var message = JsonSerializer.Serialize(new { type = "disconnect", data = _players[clientId] });
+            var message = JsonSerializer.Serialize(new { type = "disconnect", data = clientId });
             await BroadcastRawAsync(message, null, ct);
         }
         private static async Task BroadcastPlayerChangedMapAsync(string clientId, string? oldMap, CancellationToken ct)
