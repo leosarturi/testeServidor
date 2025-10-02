@@ -24,7 +24,11 @@ namespace ServidorLocal
         private static readonly ConcurrentDictionary<string, string> _playersMap = new();
         private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
 
-        private static SpawnData area1 = new(0f, 0f, 0, 0, Array.Empty<MobData>(), "mapa");
+        private static SpawnData area1 = new(50f, 50f, 0, Array.Empty<MobData>(), "mapa");
+        private static SpawnData area2 = new(-50f, 50f, 0, Array.Empty<MobData>(), "mapa");
+        private static SpawnData area3 = new(50f, -50f, 0, Array.Empty<MobData>(), "mapa");
+        private static SpawnData area4 = new(-50f, -50f, 0, Array.Empty<MobData>(), "mapa");
+        private static SpawnData[] listofareas = [area1, area2, area3, area4];
 
 
         public static event Action<string>? OnPlayerConnected;
@@ -145,14 +149,21 @@ namespace ServidorLocal
 
             await BroadcastPlayersOfMapAsync(map, ct);
 
-            if (map == area1.Mapa)
-            {
-                var data = new { type = "mob", data = area1.Mobs, map = area1.Mapa };
-                var json = JsonSerializer.Serialize(data);
 
-                // IMPORTANTE: não passe "a" se não for um clientId válido
-                await BroadcastAllAsync(json, area1.Mapa, ct);
+            foreach (var item in listofareas)
+            {
+                Console.WriteLine(item.Mapa);
+                Console.WriteLine(item.Mobs.Count());
+                if (map == item.Mapa)
+                {
+                    var data = new { type = "mob", data = item.Mobs, map = item.Mapa };
+                    var json = JsonSerializer.Serialize(data);
+                    Console.WriteLine(json);
+                    // IMPORTANTE: não passe "a" se não for um clientId válido
+                    //  _ = BroadcastAllAsync(json, item.Mapa, ct);
+                }
             }
+
         }
 
         // -------------------- Handshake --------------------
@@ -362,10 +373,25 @@ namespace ServidorLocal
                         {
                             env = JsonSerializer.Deserialize<SocketEnvelope<List<MobData>>>(msg);
                         }
-                        catch { }
-
+                        catch (Exception e)
+                        {
+                            Console.WriteLine(e);
+                        }
                         if (env is null || env.Value.data is null) return;
-                        area1.Mobs = env.Value.data.ToArray();
+                        var a1 = env.Value.data.Where((x) =>
+                        {
+                            if (x.area == 0 && x.life > 0) return true;
+                            return false;
+                        }).ToArray();
+                        var a2 = env.Value.data.Where(x => x.area == 1 && x.life > 0).ToArray();
+                        var a3 = env.Value.data.Where(x => x.area == 2 && x.life > 0).ToArray();
+                        var a4 = env.Value.data.Where(x => x.area == 3 && x.life > 0).ToArray();
+                        area1.Mobs = a1;
+                        area2.Mobs = a2;
+                        area3.Mobs = a3;
+                        area4.Mobs = a4;
+                        listofareas = [area1, area2, area3, area4];
+
                         return;
                     }
                 default:
@@ -533,8 +559,8 @@ namespace ServidorLocal
         }
 
         // --- config do loop ---
-        private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(200);
-        private const int MaxMobs = 50;
+        private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(2000);
+        private const int MaxMobs = 15;
         private const int MaxPerTick = 5;
 
         // --- loop em background ---
@@ -543,12 +569,17 @@ namespace ServidorLocal
             using var timer = new PeriodicTimer(TickInterval);
             while (await timer.WaitForNextTickAsync(stop))
             {
-                // envie o delta ou o estado — aqui vou manter seu exemplo simples:
-                var data = new { type = "mob", data = area1.Mobs, map = area1.Mapa };
-                var json = JsonSerializer.Serialize(data);
 
+                // envie o delta ou o estado — aqui vou manter seu exemplo simples:
+
+                foreach (var item in listofareas)
+                {
+                    var data = new { type = "mob", data = item.Mobs, map = item.Mapa };
+                    var json = JsonSerializer.Serialize(data);
+                    await BroadcastAllAsync(json, item.Mapa, stop);
+                }
                 // IMPORTANTE: não passe "a" se não for um clientId válido
-                await BroadcastAllAsync(json, area1.Mapa, stop);
+
                 try { TickSpawn(stop); }
                 catch { /* log opcional */ }
 
@@ -559,44 +590,65 @@ namespace ServidorLocal
         private static void TickSpawn(CancellationToken ct)
         {
             // snapshot
-            var snap = area1;
-            var current = snap.SpawnedMob;
-            if (current >= MaxMobs) return;
-
-            var toSpawn = Math.Min(MaxMobs - current, MaxPerTick);
-
-            // garanta lista mutável
-            var list = (snap.Mobs ?? Array.Empty<MobData>()).ToList();
-
-            // gere os novos mobs
-            for (int i = 0; i < toSpawn; i++)
+            for (int j = 0; j < listofareas.Count(); j++)
             {
-                var mob = new MobData(
-                    Guid.NewGuid().ToString(),
-                    Random.Shared.Next(50),
-                    Random.Shared.Next(50),
-                    5
-                );
-                list.Add(mob);
+                var snap = listofareas[j];
+                var current = snap.Mobs.Count();
+                if (current >= MaxMobs) return;
+
+                var toSpawn = Math.Min(MaxMobs - current, MaxPerTick);
+
+                // garanta lista mutável
+                var list = (snap.Mobs ?? Array.Empty<MobData>()).ToList();
+
+                // gere os novos mobs
+                for (int i = 0; i < toSpawn; i++)
+                {
+                    int x, y;
+
+                    // Para X
+                    if (snap.PosX >= 0)
+                    {
+                        x = Random.Shared.Next(0, (int)snap.PosX + 1);   // 0 até +50
+                    }
+                    else
+                    {
+                        x = Random.Shared.Next((int)snap.PosX, 1);       // -50 até 0
+                    }
+
+                    // Para Y
+                    if (snap.PosY >= 0)
+                    {
+                        y = Random.Shared.Next(0, (int)snap.PosY + 1);
+                    }
+                    else
+                    {
+                        y = Random.Shared.Next((int)snap.PosY, 1);
+                    }
+
+                    var mob = new MobData(
+                        Guid.NewGuid().ToString(),
+                        x,
+                        y,
+                        100 * (j + 1),
+                        Random.Shared.Next(4),
+                        j
+                    );
+                    list.Add(mob);
+                }
+
+                // substitui o struct inteiro (record struct é imutável)
+                listofareas[j] = snap with
+                {
+                    LastSpawnedTime = Environment.TickCount,
+                    Mobs = list.ToArray()
+                };
+                Console.WriteLine(listofareas[j].Mobs.Count());
+
             }
-
-            // substitui o struct inteiro (record struct é imutável)
-            area1 = snap with
-            {
-                SpawnedMob = snap.SpawnedMob + toSpawn,
-                LastSpawnedTime = Environment.TickCount,
-                Mobs = list.ToArray()
-            };
-
-            // envie o delta ou o estado — aqui vou manter seu exemplo simples:
-            var data = new { type = "mob", data = area1.Mobs };
-            var json = JsonSerializer.Serialize(data);
 
 
         }
-
-
-
     }
 
 }

@@ -4,5 +4,7 @@ public readonly record struct MobData(
     string idmob,
     float posx,
     float posy,
-    int life
+    float life,
+    int tipo,
+    int area
 );
