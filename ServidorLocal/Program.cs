@@ -403,25 +403,6 @@ namespace ServidorLocal
                         return;
                     }
 
-                case "mob_damage":
-                    {
-                        SocketEnvelope<List<MobDamageInput>>? env = null;
-                        try { env = JsonSerializer.Deserialize<SocketEnvelope<List<MobDamageInput>>>(msg); } catch { }
-                        if (env is null || env.Value.data is null) return;
-
-                        var map = _playersMap.TryGetValue(clientId, out var m) ? m : "cidade";
-
-                        foreach (var hit in env.Value.data)
-                        {
-                            var (died, deadMob) = await ApplyMobDamageAsync(map, hit.id, hit.damage, ct);
-                            if (died && deadMob.HasValue)
-                            {
-                                var xp = ComputeMobXp(deadMob.Value);
-                                await AwardXpAsync(clientId, xp, map, ct);
-                            }
-                        }
-                        return;
-                    }
 
                 case "party_set":
                     {
@@ -502,48 +483,6 @@ namespace ServidorLocal
                 default:
                     return;
             }
-        }
-
-        // Agora retorna se morreu e qual mob morreu (para XP)
-        private static async Task<(bool died, MobData? deadMob)> ApplyMobDamageAsync(string map, string mobId, float damage, CancellationToken ct)
-        {
-            var oldAreas = _areas;
-            if (!oldAreas.TryGetValue(map, out var area)) return (false, null);
-
-            var list = area.Mobs.ToList();
-            var idx = list.FindIndex(m => m.idmob == mobId);
-            if (idx < 0) return (false, null);
-
-            var mob = list[idx];
-            var newLife = MathF.Max(0, mob.life - damage);
-            list[idx] = mob with { life = newLife };
-
-            MobData? dead = null;
-            if (newLife <= 0)
-            {
-                dead = list[idx];
-                list.RemoveAt(idx);
-            }
-
-            // swap + delta
-            var newArea = area with { Version = area.Version + 1, Mobs = list.ToArray() };
-            var newDict = new Dictionary<string, AreaState>(_areas, StringComparer.OrdinalIgnoreCase) { [map] = newArea };
-            _areas = newDict;
-
-            var (adds, updates, removes, _) = Diff(area.Mobs, newArea.Mobs);
-            var deltaPayload = new
-            {
-                type = "mob_delta",
-                map = newArea.Map,
-                v = newArea.Version,
-                adds = adds.Select(ToWire).ToArray(),
-                updates,
-                removes
-            };
-            var json = JsonSerializer.Serialize(deltaPayload, _json);
-            await BroadcastAllAsync(json, map, ct);
-
-            return (dead.HasValue, dead);
         }
 
         /* -------------------- PARTY -------------------- */
