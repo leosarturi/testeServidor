@@ -23,7 +23,7 @@ namespace ServidorLocal
         private static readonly ConcurrentDictionary<string, string> _playersMap = new();
         private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
 
-        // Config de spawn por "área" (quadrantes). Todos no mesmo mapa "cidade".
+        // Config de spawn por "área" (quadrantes). Todos no mesmo mapa "mapa".
         private static SpawnData area1 = new(50f, 50f, 0, Array.Empty<MobData>(), "mapa");
         private static SpawnData area2 = new(-50f, 50f, 0, Array.Empty<MobData>(), "mapa");
         private static SpawnData area3 = new(50f, -50f, 0, Array.Empty<MobData>(), "mapa");
@@ -49,7 +49,6 @@ namespace ServidorLocal
                 ["mapa"] = new AreaState("mapa", 0, Array.Empty<MobData>()),
                 ["cidade"] = new AreaState("cidade", 0, Array.Empty<MobData>())
             };
-
 
         public static event Action<string>? OnPlayerConnected;
         public static event Action<string>? OnPlayerDisconnected;
@@ -202,11 +201,10 @@ namespace ServidorLocal
             };
             var json = JsonSerializer.Serialize(payload, _json);
 
-            Console.WriteLine($"[Mob] SEND SNAPSHOT map={area.Map} v={area.Version} count={area.Mobs.Length}"); // <—
+            Console.WriteLine($"[Mob] SEND SNAPSHOT map={area.Map} v={area.Version} count={area.Mobs.Length}");
 
             await socket.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, ct);
         }
-
 
         // -------------------- Handshake --------------------
         private static async Task<PlayerData?> ReceiveFirstMessageAsync(WebSocket socket, CancellationToken ct)
@@ -341,7 +339,9 @@ namespace ServidorLocal
                         return;
                     }
                     catch { /* ignore */ }
+#pragma warning disable CS0162
                     break;
+#pragma warning restore CS0162
 
                 case "mob_request":
                     {
@@ -402,6 +402,7 @@ namespace ServidorLocal
                         await BroadcastAllPlayersAsync(clientId, ct);
                         return;
                     }
+
                 case "mob_damage":
                     {
                         SocketEnvelope<List<MobDamageInput>>? env = null;
@@ -409,17 +410,28 @@ namespace ServidorLocal
                         if (env is null || env.Value.data is null) return;
 
                         var map = _playersMap.TryGetValue(clientId, out var m) ? m : "cidade";
+
                         foreach (var hit in env.Value.data)
-                            await ApplyMobDamageAsync(map, hit.id, hit.damage, ct);
+                        {
+                            var (died, deadMob) = await ApplyMobDamageAsync(map, hit.id, hit.damage, ct);
+                            if (died && deadMob.HasValue)
+                            {
+                                var xp = ComputeMobXp(deadMob.Value);
+                                await AwardXpAsync(clientId, xp, map, ct);
+                            }
+                        }
                         return;
                     }
+
                 case "party_set":
                     {
                         try
                         {
                             var env = JsonSerializer.Deserialize<SocketEnvelope<PartySetInput>>(msg);
                             if (env.data != null)
-                                SetParty(clientId, string.IsNullOrWhiteSpace(env.data.partyId) ? null : env.data.partyId!.Trim());
+                                await SetPartyAsync(clientId,
+                                    string.IsNullOrWhiteSpace(env.data.partyId) ? null : env.data.partyId!.Trim(),
+                                    ct);
                         }
                         catch { /* ignore */ }
                         return;
@@ -492,44 +504,33 @@ namespace ServidorLocal
             }
         }
 
-        private static async Task ApplyMobDamageAsync(string map, string mobId, float damage, CancellationToken ct)
+        // Agora retorna se morreu e qual mob morreu (para XP)
+        private static async Task<(bool died, MobData? deadMob)> ApplyMobDamageAsync(string map, string mobId, float damage, CancellationToken ct)
         {
             var oldAreas = _areas;
-            if (!oldAreas.TryGetValue(map, out var area)) return;
+            if (!oldAreas.TryGetValue(map, out var area)) return (false, null);
 
-            var idx = Array.FindIndex(area.Mobs, m => m.idmob == mobId);
-            if (idx < 0) return;
+            var list = area.Mobs.ToList();
+            var idx = list.FindIndex(m => m.idmob == mobId);
+            if (idx < 0) return (false, null);
 
-            var mob = area.Mobs[idx];
+            var mob = list[idx];
             var newLife = MathF.Max(0, mob.life - damage);
+            list[idx] = mob with { life = newLife };
 
-            var adds = new List<MobData>();
-            var updates = new List<object>();
-            var removes = new List<string>();
-            AreaState newArea;
-
+            MobData? dead = null;
             if (newLife <= 0)
             {
-                // remove do array
-                var list = area.Mobs.ToList();
+                dead = list[idx];
                 list.RemoveAt(idx);
-                newArea = area with { Version = area.Version + 1, Mobs = list.ToArray() };
-                removes.Add(mob.idmob);
-            }
-            else
-            {
-                // atualiza vida
-                var arr = (MobData[])area.Mobs.Clone();
-                arr[idx] = mob with { life = newLife }; // MobData é record struct → 'with'
-                newArea = area with { Version = area.Version + 1, Mobs = arr };
-                updates.Add(new { id = mob.idmob, life = newLife });
             }
 
-            // swap atômico do dicionário
-            var dict = new Dictionary<string, AreaState>(oldAreas, StringComparer.OrdinalIgnoreCase) { [map] = newArea };
-            _areas = dict;
+            // swap + delta
+            var newArea = area with { Version = area.Version + 1, Mobs = list.ToArray() };
+            var newDict = new Dictionary<string, AreaState>(_areas, StringComparer.OrdinalIgnoreCase) { [map] = newArea };
+            _areas = newDict;
 
-            // emite delta só do que mudou
+            var (adds, updates, removes, _) = Diff(area.Mobs, newArea.Mobs);
             var deltaPayload = new
             {
                 type = "mob_delta",
@@ -540,28 +541,56 @@ namespace ServidorLocal
                 removes
             };
             var json = JsonSerializer.Serialize(deltaPayload, _json);
-            await BroadcastAllAsync(json, map, ct); // já filtra por mapa. :contentReference[oaicite:4]{index=4}
+            await BroadcastAllAsync(json, map, ct);
+
+            return (dead.HasValue, dead);
         }
 
+        /* -------------------- PARTY -------------------- */
 
-        /* PARTY */
-
-        private static void SetParty(string playerId, string? partyId)
+        private static async Task SetPartyAsync(string playerId, string? partyIdOrNull, CancellationToken ct)
         {
-            // remove de party anterior
-            if (_partyOfPlayer.TryGetValue(playerId, out var old) && !string.IsNullOrEmpty(old))
-                if (_partyMembers.TryGetValue(old!, out var oldSet)) lock (oldSet) oldSet.Remove(playerId);
+            // Remove de party anterior (se houver)
+            string? oldParty = null;
 
-            // define nova
-            if (string.IsNullOrWhiteSpace(partyId))
+            if (_partyOfPlayer.TryGetValue(playerId, out var prev) && !string.IsNullOrWhiteSpace(prev))
+            {
+                oldParty = prev!;
+                if (_partyMembers.TryGetValue(prev!, out var oldSet))
+                {
+                    lock (oldSet) oldSet.Remove(playerId);
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(partyIdOrNull))
             {
                 _partyOfPlayer[playerId] = null;
+                if (oldParty != null && _partyMembers.TryGetValue(oldParty, out var setAfter))
+                {
+                    var remaining = string.Join(", ", setAfter);
+                    Console.WriteLine($"[Party] {playerId} saiu da party '{oldParty}'. Membros agora: {remaining}");
+                }
                 return;
             }
 
-            _partyOfPlayer[playerId] = partyId;
-            var set = _partyMembers.GetOrAdd(partyId, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            // Adiciona na nova party
+            _partyOfPlayer[playerId] = partyIdOrNull;
+            var set = _partyMembers.GetOrAdd(partyIdOrNull!, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
             lock (set) set.Add(playerId);
+
+            var members = string.Join(", ", set);
+            Console.WriteLine($"[Party] {playerId} entrou na party '{partyIdOrNull}'. Membros: {members}");
+
+            // Responde SÓ para quem entrou, com a lista
+            if (_clients.TryGetValue(playerId, out var ws) && ws.State == WebSocketState.Open)
+            {
+                var payload = new
+                {
+                    type = "party_info",
+                    data = new { party = partyIdOrNull, members = set.ToArray() }
+                };
+                await ws.SendAsync(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, _json)), WebSocketMessageType.Text, true, ct);
+            }
         }
 
         private static int ComputeMobXp(in MobData m)
@@ -579,9 +608,9 @@ namespace ServidorLocal
             }
         }
 
+        // Divide XP igualmente entre membros da party do killer (no mesmo mapa). Se não houver party, tudo para o killer.
         private static async Task AwardXpAsync(string killerId, int totalXp, string map, CancellationToken ct)
         {
-            // quem participa do split?
             var partyId = _partyOfPlayer.TryGetValue(killerId, out var p) ? p : null;
 
             List<string> recipients;
@@ -591,18 +620,32 @@ namespace ServidorLocal
             }
             else
             {
-                // todos online, e (opcional) no mesmo mapa
                 if (_partyMembers.TryGetValue(partyId!, out var set))
                     recipients = set.Where(pid => _clients.ContainsKey(pid) &&
                                                   _playersMap.TryGetValue(pid, out var m) && m == map).ToList();
                 else
                     recipients = new List<string> { killerId };
+
                 if (recipients.Count == 0) recipients.Add(killerId);
             }
 
             var per = Math.Max(1, totalXp / recipients.Count);
             var remainder = Math.Max(0, totalXp - per * recipients.Count);
 
+            // Também envia um pacote "xp_gain" resumido com todos os recipients (útil se quiser logar no cliente)
+            var announce = new
+            {
+                type = "xp_gain",
+                who = killerId,
+                xp = totalXp,
+                per = per,
+                to = recipients
+            };
+            var announceJson = JsonSerializer.Serialize(announce, _json);
+            foreach (var r in recipients)
+                await SendToClientAsync(r, announceJson, ct);
+
+            // E um pacote por-player (compat com clientes que esperam por jogador/amount)
             foreach (var (pid, idx) in recipients.Select((id, i) => (id, i)))
             {
                 var gain = per + (idx < remainder ? 1 : 0);
@@ -614,8 +657,6 @@ namespace ServidorLocal
                 await SendToClientAsync(pid, payload, ct);
             }
         }
-
-
 
         // -------------------- Broadcasts (Players) --------------------
         private static async Task BroadcastAllPlayersAsync(string clientId, CancellationToken ct)
@@ -733,8 +774,6 @@ namespace ServidorLocal
 
             while (await timer.WaitForNextTickAsync(stop))
             {
-                // Atualiza estado (spawn simples por área) e emite deltas se houve mudança.
-                // Temos um único mapa "cidade" nos exemplos.
                 var map = "mapa";
 
                 // Snapshot antigo
@@ -768,8 +807,8 @@ namespace ServidorLocal
                         type = "mob_delta",
                         map = newArea.Map,
                         v = newArea.Version,
-                        adds = adds.Select(ToWire).ToArray(), // <- normaliza nomes
-                        updates,                                // já está no formato { id, x?, y?, life?, ... }
+                        adds = adds.Select(ToWire).ToArray(),
+                        updates,
                         removes
                     };
                     var json = JsonSerializer.Serialize(deltaPayload, _json);
