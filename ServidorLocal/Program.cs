@@ -30,6 +30,8 @@ namespace ServidorLocal
         private static SpawnData area4 = new(-50f, -50f, 0, Array.Empty<MobData>(), "mapa");
         private static SpawnData[] _spawnConfigs = new[] { area1, area2, area3, area4 };
 
+        private readonly record struct MobDamageInput(string id, float damage);
+
         // Estado autoritativo de mobs por mapa (swap atômico de referência)
         private sealed record AreaState(string Map, int Version, MobData[] Mobs);
         private static volatile Dictionary<string, AreaState> _areas =
@@ -391,11 +393,74 @@ namespace ServidorLocal
                         await BroadcastAllPlayersAsync(clientId, ct);
                         return;
                     }
+                case "mob_damage":
+                    {
+                        SocketEnvelope<List<MobDamageInput>>? env = null;
+                        try { env = JsonSerializer.Deserialize<SocketEnvelope<List<MobDamageInput>>>(msg); } catch { }
+                        if (env is null || env.Value.data is null) return;
+
+                        var map = _playersMap.TryGetValue(clientId, out var m) ? m : "cidade";
+                        foreach (var hit in env.Value.data)
+                            await ApplyMobDamageAsync(map, hit.id, hit.damage, ct);
+                        return;
+                    }
 
                 default:
                     return;
             }
         }
+
+        private static async Task ApplyMobDamageAsync(string map, string mobId, float damage, CancellationToken ct)
+        {
+            var oldAreas = _areas;
+            if (!oldAreas.TryGetValue(map, out var area)) return;
+
+            var idx = Array.FindIndex(area.Mobs, m => m.idmob == mobId);
+            if (idx < 0) return;
+
+            var mob = area.Mobs[idx];
+            var newLife = MathF.Max(0, mob.life - damage);
+
+            var adds = new List<MobData>();
+            var updates = new List<object>();
+            var removes = new List<string>();
+            AreaState newArea;
+
+            if (newLife <= 0)
+            {
+                // remove do array
+                var list = area.Mobs.ToList();
+                list.RemoveAt(idx);
+                newArea = area with { Version = area.Version + 1, Mobs = list.ToArray() };
+                removes.Add(mob.idmob);
+            }
+            else
+            {
+                // atualiza vida
+                var arr = (MobData[])area.Mobs.Clone();
+                arr[idx] = mob with { life = newLife }; // MobData é record struct → 'with'
+                newArea = area with { Version = area.Version + 1, Mobs = arr };
+                updates.Add(new { id = mob.idmob, life = newLife });
+            }
+
+            // swap atômico do dicionário
+            var dict = new Dictionary<string, AreaState>(oldAreas, StringComparer.OrdinalIgnoreCase) { [map] = newArea };
+            _areas = dict;
+
+            // emite delta só do que mudou
+            var deltaPayload = new
+            {
+                type = "mob_delta",
+                map = newArea.Map,
+                v = newArea.Version,
+                adds = adds.Select(ToWire).ToArray(),
+                updates,
+                removes
+            };
+            var json = JsonSerializer.Serialize(deltaPayload, _json);
+            await BroadcastAllAsync(json, map, ct); // já filtra por mapa. :contentReference[oaicite:4]{index=4}
+        }
+
 
         // -------------------- Broadcasts (Players) --------------------
         private static async Task BroadcastAllPlayersAsync(string clientId, CancellationToken ct)
