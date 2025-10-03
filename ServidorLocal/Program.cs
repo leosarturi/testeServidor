@@ -35,8 +35,10 @@ namespace ServidorLocal
         private static volatile Dictionary<string, AreaState> _areas =
             new(StringComparer.OrdinalIgnoreCase)
             {
-                ["mapa"] = new AreaState("mapa", 0, Array.Empty<MobData>())
+                ["mapa"] = new AreaState("mapa", 0, Array.Empty<MobData>()),
+                ["cidade"] = new AreaState("cidade", 0, Array.Empty<MobData>())
             };
+
 
         public static event Action<string>? OnPlayerConnected;
         public static event Action<string>? OnPlayerDisconnected;
