@@ -498,6 +498,11 @@ namespace ServidorLocal
                 if (_partyMembers.TryGetValue(prev!, out var oldSet))
                 {
                     lock (oldSet) oldSet.Remove(playerId);
+                    Console.WriteLine($"[Party] {playerId} saiu da party '{oldParty}'. Membros agora: {string.Join(", ", _partyMembers)}");
+
+                    var leavePayload = new { type = "party_info", data = new { party = "", members = _partyMembers } };
+                    await SendToClientAsync(playerId, JsonSerializer.Serialize(leavePayload), ct);
+
                 }
             }
 
