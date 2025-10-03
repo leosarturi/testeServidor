@@ -337,9 +337,7 @@ namespace ServidorLocal
                         return;
                     }
                     catch { /* ignore */ }
-#pragma warning disable CS0162
                     break;
-#pragma warning restore CS0162
 
                 case "mob_request":
                     {
@@ -630,7 +628,7 @@ namespace ServidorLocal
                 {
                     type = "trocar_mapa",
                     data = playersOfMap
-                }, _json);
+                });
 
                 var bytes = Encoding.UTF8.GetBytes(message);
 
