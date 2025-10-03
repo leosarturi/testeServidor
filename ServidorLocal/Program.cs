@@ -559,7 +559,7 @@ namespace ServidorLocal
         }
 
         // --- config do loop ---
-        private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(2000);
+        private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(200);
         private const int MaxMobs = 15;
         private const int MaxPerTick = 5;
 
