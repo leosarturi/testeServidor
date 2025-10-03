@@ -12,7 +12,6 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Linq;
-using System.Diagnostics;
 
 namespace ServidorLocal
 {
@@ -24,12 +23,20 @@ namespace ServidorLocal
         private static readonly ConcurrentDictionary<string, string> _playersMap = new();
         private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
 
+        // Config de spawn por "área" (quadrantes). Todos no mesmo mapa "cidade".
         private static SpawnData area1 = new(50f, 50f, 0, Array.Empty<MobData>(), "mapa");
         private static SpawnData area2 = new(-50f, 50f, 0, Array.Empty<MobData>(), "mapa");
         private static SpawnData area3 = new(50f, -50f, 0, Array.Empty<MobData>(), "mapa");
         private static SpawnData area4 = new(-50f, -50f, 0, Array.Empty<MobData>(), "mapa");
-        private static SpawnData[] listofareas = [area1, area2, area3, area4];
+        private static SpawnData[] _spawnConfigs = new[] { area1, area2, area3, area4 };
 
+        // Estado autoritativo de mobs por mapa (swap atômico de referência)
+        private sealed record AreaState(string Map, int Version, MobData[] Mobs);
+        private static volatile Dictionary<string, AreaState> _areas =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                ["mapa"] = new AreaState("mapa", 0, Array.Empty<MobData>())
+            };
 
         public static event Action<string>? OnPlayerConnected;
         public static event Action<string>? OnPlayerDisconnected;
@@ -87,7 +94,7 @@ namespace ServidorLocal
 
             OnPlayerConnected += id => Console.WriteLine($"[Evento] Player conectado: {id}");
             OnPlayerDisconnected += id => Console.WriteLine($"[Evento] Player desconectado: {id}");
-            _ = RunSpawnLoopAsync(app.Lifetime.ApplicationStopping);
+            _ = RunGameLoopAsync(app.Lifetime.ApplicationStopping);
 
             app.Map("/ws", HandleWebSocketAsync);
             app.Run();
@@ -115,55 +122,73 @@ namespace ServidorLocal
             }
 
             var ct = context.RequestAborted;
-            var clientId = await ReceiveFirstMessageAsync(socket, ct);
-            if (clientId == null) return;
+            var init = await ReceiveFirstMessageAsync(socket, ct);
+            if (init == null) return;
 
-            await SendClientIdAsync(socket, clientId.Value.idplayer, ct);
-            RegisterClient((PlayerData)clientId, socket);
-            await BroadcastPlayerConnectedAsync((PlayerData)clientId, ct);
-            //  await ChangeMap(clientId, "cidade", ct);
-            await HandleClientLoopAsync(socket, clientId.Value.idplayer, ct);
+            await SendClientIdAsync(socket, init.Value.idplayer, ct);
+            RegisterClient(init.Value, socket);
 
+            // snapshot inicial para o mapa do jogador
+            if (_playersMap.TryGetValue(init.Value.idplayer, out var map))
+            {
+                await SendMobSnapshotAsync(socket, map, ct);
+                await BroadcastPlayersOfMapAsync(map, ct);
+            }
 
-
-
-
-
+            await HandleClientLoopAsync(socket, init.Value.idplayer, ct);
         }
 
+        // -------------------- Helper de normalização (wire DTO) --------------------
+        private static object ToWire(MobData m) => new
+        {
+            id = m.idmob,
+            x = m.posx,
+            y = m.posy,
+            life = m.life,
+            tipo = m.tipo,
+            area = m.area
+        };
+
+        // -------------------- Mapa / Snapshot --------------------
         private static async Task ChangeMap(string clientId, string map, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(map)) return;
 
             _playersMap.TryGetValue(clientId, out var oldMap);
             Console.WriteLine($"Cliente {clientId} trocou de '{oldMap}' para '{map}'");
-            var player = _players[clientId];
-            _players.TryUpdate(clientId, new PlayerData(player.idplayer, player.posx, player.posy, map, player.status), player);
+
+            if (_players.TryGetValue(clientId, out var player))
+            {
+                _players[clientId] = player with { mapa = map };
+            }
             _playersMap[clientId] = map;
 
-
-
-            // Atualiza a foto do mapa antigo (alguém saiu) e do novo mapa (alguém entrou)
+            // Atualiza listas de players por mapa
             if (!string.IsNullOrEmpty(oldMap))
                 await BroadcastPlayersOfMapAsync(oldMap, ct);
 
             await BroadcastPlayersOfMapAsync(map, ct);
 
-
-            foreach (var item in listofareas)
+            // Envia snapshot de mobs desse mapa somente para o cliente que trocou
+            if (_clients.TryGetValue(clientId, out var ws) && ws.State == WebSocketState.Open)
             {
-                Console.WriteLine(item.Mapa);
-                Console.WriteLine(item.Mobs.Count());
-                if (map == item.Mapa)
-                {
-                    var data = new { type = "mob", data = item.Mobs, map = item.Mapa };
-                    var json = JsonSerializer.Serialize(data);
-                    Console.WriteLine(json);
-                    // IMPORTANTE: não passe "a" se não for um clientId válido
-                    //  _ = BroadcastAllAsync(json, item.Mapa, ct);
-                }
+                await SendMobSnapshotAsync(ws, map, ct);
             }
+        }
 
+        private static async Task SendMobSnapshotAsync(WebSocket socket, string map, CancellationToken ct)
+        {
+            if (!_areas.TryGetValue(map, out var area)) return;
+
+            var payload = new
+            {
+                type = "mob_state",
+                map = area.Map,
+                v = area.Version,
+                mobs = area.Mobs.Select(ToWire).ToArray() // <- normaliza nomes: id/x/y/...
+            };
+            var json = JsonSerializer.Serialize(payload, _json);
+            await socket.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, ct);
         }
 
         // -------------------- Handshake --------------------
@@ -173,14 +198,10 @@ namespace ServidorLocal
             using var ms = new MemoryStream();
             try
             {
-
-
                 WebSocketReceiveResult result;
                 do
                 {
                     result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
-                    Console.WriteLine($"Received first message: {result.Count}");
-                    Console.WriteLine($"Received first message: {result.EndOfMessage}");
                     if (result.MessageType == WebSocketMessageType.Close)
                         return null;
 
@@ -189,10 +210,8 @@ namespace ServidorLocal
                 while (!result.EndOfMessage);
 
                 var msg = Encoding.UTF8.GetString(ms.ToArray());
-                Console.WriteLine($"{msg}");
                 var initData = JsonSerializer.Deserialize<PlayerData>(msg);
                 return initData;
-
             }
             catch (Exception ex)
             {
@@ -201,15 +220,12 @@ namespace ServidorLocal
             }
         }
 
-
         private static async Task SendClientIdAsync(WebSocket socket, string clientId, CancellationToken ct)
         {
             try
             {
                 var idBytes = Encoding.UTF8.GetBytes(clientId);
-
                 await socket.SendAsync(idBytes, WebSocketMessageType.Text, true, ct);
-
             }
             catch (Exception ex)
             {
@@ -218,12 +234,15 @@ namespace ServidorLocal
         }
 
         // -------------------- Registro / limpeza --------------------
-        private static void RegisterClient(PlayerData clientId, WebSocket socket)
+        private static void RegisterClient(PlayerData player, WebSocket socket)
         {
-            _clients[clientId.idplayer] = socket;
-            _players.TryAdd(clientId.idplayer, clientId);
-            _playersMap.TryAdd(clientId.idplayer, "cidade");
-            OnPlayerConnected?.Invoke(clientId.idplayer);
+            _clients[player.idplayer] = socket;
+            _players.TryAdd(player.idplayer, player);
+            _playersMap.TryAdd(player.idplayer, player.mapa ?? "cidade");
+            OnPlayerConnected?.Invoke(player.idplayer);
+
+            // envia a lista de players do mapa atual para ele (e o connect para os demais, se quiser)
+            _ = BroadcastPlayersOfMapAsync(_playersMap[player.idplayer], CancellationToken.None);
         }
 
         private static async Task SafeCloseAndCleanupAsync(string clientId, WebSocket socket, CancellationToken ct)
@@ -233,13 +252,14 @@ namespace ServidorLocal
                 if (socket.State == WebSocketState.Open)
                     await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Fechando", ct);
             }
-            catch { }
+            catch { /* ignore */ }
 
             _clients.TryRemove(clientId, out _);
-            var dataTosend = _players[clientId];
-            _players.TryRemove(clientId, out _);
+            _players.TryRemove(clientId, out var removed);
             OnPlayerDisconnected?.Invoke(clientId);
-            _ = BroadcastPlayerDisconnectedAsync(dataTosend, ct);
+
+            var message = JsonSerializer.Serialize(new { type = "disconnect", data = removed }, _json);
+            await BroadcastRawAsync(message, null, ct);
         }
 
         // -------------------- Loop de mensagens --------------------
@@ -299,24 +319,29 @@ namespace ServidorLocal
                 case "trocar_mapa":
                     try
                     {
-
                         SocketEnvelope<MapData> envelope = JsonSerializer.Deserialize<SocketEnvelope<MapData>>(msg);
-                        Console.WriteLine(msg);
                         await ChangeMap(envelope.data.idplayer, envelope.data.mapa, ct);
                         return;
                     }
-                    catch
-                    {
-
-                    }
+                    catch { /* ignore */ }
                     break;
+
+                case "mob_request":
+                    {
+                        // cliente pede snapshot do mapa atual
+                        if (_playersMap.TryGetValue(clientId, out var map)
+                            && _clients.TryGetValue(clientId, out var ws)
+                            && ws.State == WebSocketState.Open)
+                        {
+                            await SendMobSnapshotAsync(ws, map, ct);
+                        }
+                        return;
+                    }
+
                 case "skill":
                     {
                         SocketEnvelope<List<SkillCastInput>>? env = null;
-                        try
-                        {
-                            env = JsonSerializer.Deserialize<SocketEnvelope<List<SkillCastInput>>>(msg);
-                        }
+                        try { env = JsonSerializer.Deserialize<SocketEnvelope<List<SkillCastInput>>>(msg); }
                         catch { }
 
                         if (env is null || env.Value.data is null) return;
@@ -338,13 +363,11 @@ namespace ServidorLocal
                         }
                         return;
                     }
+
                 case "player":
                     {
                         SocketEnvelope<List<PlayerData>>? env = null;
-                        try
-                        {
-                            env = JsonSerializer.Deserialize<SocketEnvelope<List<PlayerData>>>(msg);
-                        }
+                        try { env = JsonSerializer.Deserialize<SocketEnvelope<List<PlayerData>>>(msg); }
                         catch { }
 
                         if (env is null || env.Value.data is null) return;
@@ -353,157 +376,46 @@ namespace ServidorLocal
                         {
                             var coerced = item with { idplayer = clientId };
                             _players.AddOrUpdate(
-    coerced.idplayer,          // chave
-    coerced,                   // valor a adicionar se não existir
-    (key, oldValue) => coerced // valor a atualizar se já existir
-);
-
-
-
+                                coerced.idplayer,
+                                coerced,
+                                (key, oldValue) => coerced
+                            );
                         }
 
                         await BroadcastAllPlayersAsync(clientId, ct);
                         return;
-
                     }
-                case "mob":
-                    {
-                        SocketEnvelope<List<MobData>>? env = null;
-                        try
-                        {
-                            env = JsonSerializer.Deserialize<SocketEnvelope<List<MobData>>>(msg);
-                        }
-                        catch (Exception e)
-                        {
-                            Console.WriteLine(e);
-                        }
-                        if (env is null || env.Value.data is null) return;
-                        var a1 = env.Value.data.Where((x) =>
-                        {
-                            if (x.area == 0 && x.life > 0) return true;
-                            return false;
-                        }).ToArray();
-                        var a2 = env.Value.data.Where(x => x.area == 1 && x.life > 0).ToArray();
-                        var a3 = env.Value.data.Where(x => x.area == 2 && x.life > 0).ToArray();
-                        var a4 = env.Value.data.Where(x => x.area == 3 && x.life > 0).ToArray();
-                        area1.Mobs = a1;
-                        area2.Mobs = a2;
-                        area3.Mobs = a3;
-                        area4.Mobs = a4;
-                        listofareas = [area1, area2, area3, area4];
 
-                        return;
-                    }
                 default:
                     return;
             }
         }
 
-        // -------------------- Broadcasts --------------------
+        // -------------------- Broadcasts (Players) --------------------
         private static async Task BroadcastAllPlayersAsync(string clientId, CancellationToken ct)
         {
             try
             {
-
-
                 foreach (var kvp in _clients)
                 {
-                    if (kvp.Value.State == WebSocketState.Open)
-                    {
-                        var data = JsonSerializer.Serialize(
-                            new
-                            {
-                                type = "player",
-                                data = _players.Values.ToList()
-                            },
-                            _json
-                        );
+                    if (kvp.Value.State != WebSocketState.Open) continue;
 
-                        var bytes = Encoding.UTF8.GetBytes(data);
-                        await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
-                    }
+                    var data = JsonSerializer.Serialize(
+                        new
+                        {
+                            type = "player",
+                            data = _players.Values.ToList()
+                        },
+                        _json
+                    );
+
+                    var bytes = Encoding.UTF8.GetBytes(data);
+                    await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
                 }
-
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Erro no broadcast de players: {ex.Message}");
-            }
-        }
-
-        private static async Task BroadcastPlayerConnectedAsync(PlayerData clientId, CancellationToken ct)
-        {
-
-
-            foreach (var kvp in _clients)
-            {
-                foreach (var pToSend in _clients)
-                {
-                    Console.WriteLine($"Cliente {kvp.Key} conectou enviando para {pToSend}");
-                    var message = JsonSerializer.Serialize(new { type = "connect", data = _players[pToSend.Key] });
-                    var bytes = Encoding.UTF8.GetBytes(message);
-
-                    if (kvp.Value.State == WebSocketState.Open)
-                    {
-                        try
-                        {
-                            await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
-                        }
-                        catch { /* ignore */ }
-                    }
-                }
-            }
-
-        }
-
-        private static async Task BroadcastPlayerDisconnectedAsync(PlayerData clientId, CancellationToken ct)
-        {
-            var message = JsonSerializer.Serialize(new { type = "disconnect", data = clientId });
-            await BroadcastRawAsync(message, null, ct);
-        }
-        private static async Task BroadcastPlayerChangedMapAsync(string clientId, string? oldMap, CancellationToken ct)
-        {
-            var message = JsonSerializer.Serialize(new { type = "disconnect", idplayer = clientId });
-            if (oldMap == null) return;
-            await BroadMapChangedAsync(message, clientId, oldMap, ct);
-        }
-
-        private static async Task BroadcastRawAsync(string text, string? excludeClientId, CancellationToken ct)
-        {
-            var bytes = Encoding.UTF8.GetBytes(text);
-
-            foreach (var kvp in _clients)
-            {
-                if (excludeClientId is not null && kvp.Key == excludeClientId) continue;
-                if (excludeClientId is not null && _playersMap[kvp.Key] != _playersMap[excludeClientId]) continue;
-
-                if (kvp.Value.State == WebSocketState.Open)
-                {
-                    try
-                    {
-                        await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
-                    }
-                    catch { /* ignore */ }
-                }
-            }
-        }
-
-        private static async Task BroadcastAllAsync(string text, string map, CancellationToken ct)
-        {
-            var bytes = Encoding.UTF8.GetBytes(text);
-
-            foreach (var kvp in _clients)
-            {
-
-                if (kvp.Value.State == WebSocketState.Open)
-                {
-                    if (_playersMap[kvp.Key] != map) return;
-                    try
-                    {
-                        await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
-                    }
-                    catch { /* ignore */ }
-                }
             }
         }
 
@@ -525,7 +437,8 @@ namespace ServidorLocal
 
                 foreach (var kvp in _clients)
                 {
-                    if (_playersMap.TryGetValue(kvp.Key, out var cm) && cm == map && kvp.Value.State == WebSocketState.Open)
+                    if (kvp.Value.State != WebSocketState.Open) continue;
+                    if (_playersMap.TryGetValue(kvp.Key, out var cm) && cm == map)
                     {
                         try { await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct); }
                         catch { /* ignore */ }
@@ -538,14 +451,22 @@ namespace ServidorLocal
             }
         }
 
-        private static async Task BroadMapChangedAsync(string text, string? excludeClientId, string oldMap, CancellationToken ct)
+        // -------------------- Broadcast Genérico --------------------
+        private static async Task BroadcastRawAsync(string text, string? excludeClientId, CancellationToken ct)
         {
             var bytes = Encoding.UTF8.GetBytes(text);
 
             foreach (var kvp in _clients)
             {
                 if (excludeClientId is not null && kvp.Key == excludeClientId) continue;
-                if (excludeClientId is not null && _playersMap[kvp.Key] != oldMap) continue;
+
+                if (excludeClientId is not null
+                    && _playersMap.TryGetValue(excludeClientId, out var exMap)
+                    && _playersMap.TryGetValue(kvp.Key, out var toMap)
+                    && exMap != toMap)
+                {
+                    continue;
+                }
 
                 if (kvp.Value.State == WebSocketState.Open)
                 {
@@ -558,106 +479,192 @@ namespace ServidorLocal
             }
         }
 
-        // --- config do loop ---
-        private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(200);
-        private const int MaxMobs = 15;
-        private const int MaxPerTick = 5;
-
-        // --- loop em background ---
-        private static async Task RunSpawnLoopAsync(CancellationToken stop)
+        private static async Task BroadcastAllAsync(string text, string map, CancellationToken ct)
         {
-            using var timer = new PeriodicTimer(TickInterval);
-            while (await timer.WaitForNextTickAsync(stop))
+            var bytes = Encoding.UTF8.GetBytes(text);
+
+            foreach (var kvp in _clients)
             {
+                if (kvp.Value.State != WebSocketState.Open) continue;
+                if (_playersMap.TryGetValue(kvp.Key, out var m) && m != map) continue;
 
-                // envie o delta ou o estado — aqui vou manter seu exemplo simples:
-
-                foreach (var item in listofareas)
+                try
                 {
-                    var data = new { type = "mob", data = item.Mobs, map = item.Mapa };
-                    var json = JsonSerializer.Serialize(data);
-                    await BroadcastAllAsync(json, item.Mapa, stop);
+                    await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
                 }
-                // IMPORTANTE: não passe "a" se não for um clientId válido
-
-                try { TickSpawn(stop); }
-                catch { /* log opcional */ }
-
+                catch { /* ignore */ }
             }
         }
 
-        // --- uma passada do loop ---
-        private static void TickSpawn(CancellationToken ct)
+        // -------------------- Loop do jogo (mobs autoritativos) --------------------
+        private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(200);
+        private const int MaxMobsPerArea = 15;
+        private const int MaxPerTickPerArea = 5;
+
+        private static async Task RunGameLoopAsync(CancellationToken stop)
         {
-            // snapshot
-            for (int j = 0; j < listofareas.Count(); j++)
+            using var timer = new PeriodicTimer(TickInterval);
+
+            while (await timer.WaitForNextTickAsync(stop))
             {
-                var snap = listofareas[j];
-                var current = snap.Mobs.Count();
-                if (current >= MaxMobs) return;
+                // Atualiza estado (spawn simples por área) e emite deltas se houve mudança.
+                // Temos um único mapa "cidade" nos exemplos.
+                var map = "mapa";
 
-                var toSpawn = Math.Min(MaxMobs - current, MaxPerTick);
+                // Snapshot antigo
+                var oldAreas = _areas;
+                var oldArea = oldAreas.TryGetValue(map, out var a) ? a : new AreaState(map, 0, Array.Empty<MobData>());
 
-                // garanta lista mutável
-                var list = (snap.Mobs ?? Array.Empty<MobData>()).ToList();
+                // Gera novo array de mobs aplicando spawn por área (somente adicionar; regra simples)
+                var newMobs = UpdateMobsByAreas(oldArea.Mobs);
 
-                // gere os novos mobs
+                // Calcula delta
+                var (adds, updates, removes, changed) = Diff(oldArea.Mobs, newMobs);
+
+                if (changed)
+                {
+                    var newArea = oldArea with
+                    {
+                        Version = oldArea.Version + 1,
+                        Mobs = newMobs
+                    };
+
+                    // swap dicionário
+                    var newDict = new Dictionary<string, AreaState>(oldAreas, StringComparer.OrdinalIgnoreCase)
+                    {
+                        [map] = newArea
+                    };
+                    _areas = newDict;
+
+                    // Broadcast delta para quem está no mapa
+                    var deltaPayload = new
+                    {
+                        type = "mob_delta",
+                        map = newArea.Map,
+                        v = newArea.Version,
+                        adds = adds.Select(ToWire).ToArray(), // <- normaliza nomes
+                        updates,                                // já está no formato { id, x?, y?, life?, ... }
+                        removes
+                    };
+                    var json = JsonSerializer.Serialize(deltaPayload, _json);
+                    Console.WriteLine($"[Spawn] v={newArea.Version} adds={adds.Count} updates={updates.Count} removes={removes.Count}");
+                    await BroadcastAllAsync(json, map, stop);
+                }
+            }
+        }
+
+        // Gera a nova lista de mobs por áreas, respeitando limites por área.
+        private static MobData[] UpdateMobsByAreas(MobData[] currentAll)
+        {
+            // Agrupa os mobs atuais por área (0..3)
+            var byArea = currentAll
+                .GroupBy(m => m.area)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            for (int areaIndex = 0; areaIndex < _spawnConfigs.Length; areaIndex++)
+            {
+                if (!byArea.TryGetValue(areaIndex, out var list))
+                {
+                    list = new List<MobData>();
+                    byArea[areaIndex] = list;
+                }
+
+                var curr = list.Count;
+                if (curr >= MaxMobsPerArea) continue;
+
+                var toSpawn = Math.Min(MaxMobsPerArea - curr, MaxPerTickPerArea);
+                var cfg = _spawnConfigs[areaIndex];
+
                 for (int i = 0; i < toSpawn; i++)
                 {
                     int x, y;
 
-                    // Para X
-                    if (snap.PosX >= 0)
-                    {
-                        x = Random.Shared.Next(0, (int)snap.PosX + 1);   // 0 até +50
-                    }
+                    // X
+                    if (cfg.PosX >= 0)
+                        x = Random.Shared.Next(0, (int)cfg.PosX + 1);
                     else
-                    {
-                        x = Random.Shared.Next((int)snap.PosX, 1);       // -50 até 0
-                    }
+                        x = Random.Shared.Next((int)cfg.PosX, 1);
 
-                    // Para Y
-                    if (snap.PosY >= 0)
-                    {
-                        y = Random.Shared.Next(0, (int)snap.PosY + 1);
-                    }
+                    // Y
+                    if (cfg.PosY >= 0)
+                        y = Random.Shared.Next(0, (int)cfg.PosY + 1);
                     else
-                    {
-                        y = Random.Shared.Next((int)snap.PosY, 1);
-                    }
+                        y = Random.Shared.Next((int)cfg.PosY, 1);
 
                     var mob = new MobData(
                         Guid.NewGuid().ToString(),
-                        x,
-                        y,
-                        100 * (j + 1),
+                        x,   // implícito para float
+                        y,   // implícito para float
+                        100 * (areaIndex + 1),
                         Random.Shared.Next(4),
-                        j
+                        areaIndex
                     );
+
                     list.Add(mob);
                 }
-
-                // substitui o struct inteiro (record struct é imutável)
-                listofareas[j] = snap with
-                {
-                    LastSpawnedTime = Environment.TickCount,
-                    Mobs = list.ToArray()
-                };
-                Console.WriteLine(listofareas[j].Mobs.Count());
-
             }
 
+            // Flatten
+            return byArea.OrderBy(k => k.Key).SelectMany(k => k.Value).ToArray();
+        }
 
+        // Calcula delta entre listas (por id). Updates consideram mudança em x,y,life,tipo,area.
+        private static (List<MobData> adds, List<object> updates, List<string> removes, bool changed)
+            Diff(MobData[] oldArr, MobData[] newArr)
+        {
+            var adds = new List<MobData>();
+            var updates = new List<object>();
+            var removes = new List<string>();
+            bool changed = false;
+
+            var oldById = oldArr.ToDictionary(m => m.idmob);
+            var newById = newArr.ToDictionary(m => m.idmob);
+
+            // Removidos
+            foreach (var oldId in oldById.Keys)
+                if (!newById.ContainsKey(oldId))
+                {
+                    removes.Add(oldId);
+                    changed = true;
+                }
+
+            // Adicionados/Atualizados
+            foreach (var kv in newById)
+            {
+                if (!oldById.TryGetValue(kv.Key, out var prev))
+                {
+                    adds.Add(kv.Value);
+                    changed = true;
+                }
+                else
+                {
+                    var cur = kv.Value;
+                    if (prev.posx != cur.posx || prev.posy != cur.posy || prev.life != cur.life || prev.tipo != cur.tipo || prev.area != cur.area)
+                    {
+                        // updates como "patch": envia somente campos mutáveis
+                        updates.Add(new
+                        {
+                            id = cur.idmob,
+                            x = (prev.posx != cur.posx) ? cur.posx : (float?)null,
+                            y = (prev.posy != cur.posy) ? cur.posy : (float?)null,
+                            life = (prev.life != cur.life) ? cur.life : (float?)null,
+                            tipo = (prev.tipo != cur.tipo) ? cur.tipo : (int?)null,
+                            area = (prev.area != cur.area) ? cur.area : (int?)null
+                        });
+                        changed = true;
+                    }
+                }
+            }
+
+            return (adds, updates, removes, changed);
         }
     }
-
 }
 
-
-
-public class InitMessage
-{
-    public required string ClientId { get; set; }
-    public required string Classe { get; set; }
-}
-
+/* Tipos auxiliares esperados (já existentes no seu projeto)
+   - PlayerData: record com (idplayer, posx, posy, mapa, status)
+   - MobData: record struct com (idmob, posx, posy, life, tipo, area)
+   - SpawnData: record com (PosX, PosY, LastSpawnedTime, MobData[], Mapa)
+   - EnvelopeTypeOnly, SocketEnvelope<T>, MapData, SkillCastInput, SkillCast
+   Mantenha-os como já estão em ServidorLocal.Domain.
+*/
