@@ -144,9 +144,9 @@ namespace ServidorLocal
             if (_playersMap.TryGetValue(init.Value.idplayer, out var map))
             {
                 await SendMobSnapshotAsync(socket, map, ct);
-                await BroadcastPlayerConnectedAsync(_players[init.Value.idplayer], ct);
-            }
 
+            }
+            await BroadcastPlayerConnectedAsync(_players[init.Value.idplayer], ct);
             await HandleClientLoopAsync(socket, init.Value.idplayer, ct);
         }
 
@@ -257,7 +257,7 @@ namespace ServidorLocal
             OnPlayerConnected?.Invoke(player.idplayer);
 
             // envia a lista de players do mapa atual para ele (e o connect para os demais, se quiser)
-            _ = BroadcastPlayersOfMapAsync(_playersMap[player.idplayer], CancellationToken.None);
+            //  _ = BroadcastPlayersOfMapAsync(_playersMap[player.idplayer], CancellationToken.None);
         }
 
         private static async Task SafeCloseAndCleanupAsync(string clientId, WebSocket socket, CancellationToken ct)
@@ -272,9 +272,7 @@ namespace ServidorLocal
             _clients.TryRemove(clientId, out _);
             _players.TryRemove(clientId, out var removed);
             OnPlayerDisconnected?.Invoke(clientId);
-
-            var message = JsonSerializer.Serialize(new { type = "disconnect", data = removed });
-            await BroadcastRawAsync(message, null, ct);
+            await BroadcastPlayerDisconnectedAsync(removed, ct);
         }
 
         // -------------------- Loop de mensagens --------------------
@@ -789,6 +787,8 @@ namespace ServidorLocal
 
                     await BroadcastAllAsync(json, map, stop);
                 }
+
+
             }
         }
 
