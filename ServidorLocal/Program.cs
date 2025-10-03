@@ -187,11 +187,15 @@ namespace ServidorLocal
                 type = "mob_state",
                 map = area.Map,
                 v = area.Version,
-                mobs = area.Mobs.Select(ToWire).ToArray() // <- normaliza nomes: id/x/y/...
+                mobs = area.Mobs.Select(ToWire).ToArray()
             };
             var json = JsonSerializer.Serialize(payload, _json);
+
+            Console.WriteLine($"[Mob] SEND SNAPSHOT map={area.Map} v={area.Version} count={area.Mobs.Length}"); // <—
+
             await socket.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, ct);
         }
+
 
         // -------------------- Handshake --------------------
         private static async Task<PlayerData?> ReceiveFirstMessageAsync(WebSocket socket, CancellationToken ct)
@@ -550,6 +554,7 @@ namespace ServidorLocal
                     };
                     var json = JsonSerializer.Serialize(deltaPayload, _json);
                     Console.WriteLine($"[Spawn] v={newArea.Version} adds={adds.Count} updates={updates.Count} removes={removes.Count}");
+
                     await BroadcastAllAsync(json, map, stop);
                 }
             }
