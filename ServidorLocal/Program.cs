@@ -31,6 +31,15 @@ namespace ServidorLocal
         private static SpawnData[] _spawnConfigs = new[] { area1, area2, area3, area4 };
 
         private readonly record struct MobDamageInput(string id, float damage);
+        private sealed class MobHitInput { public string id { get; set; } = ""; public float dmg { get; set; } }
+        private sealed class PartySetInput { public string? partyId { get; set; } }
+
+        // Party state
+        // playerId -> partyId (ou null)
+        private static readonly ConcurrentDictionary<string, string?> _partyOfPlayer = new();
+        // partyId -> membros
+        private static readonly ConcurrentDictionary<string, HashSet<string>> _partyMembers =
+            new(StringComparer.OrdinalIgnoreCase);
 
         // Estado autoritativo de mobs por mapa (swap atômico de referência)
         private sealed record AreaState(string Map, int Version, MobData[] Mobs);
@@ -404,6 +413,79 @@ namespace ServidorLocal
                             await ApplyMobDamageAsync(map, hit.id, hit.damage, ct);
                         return;
                     }
+                case "party_set":
+                    {
+                        try
+                        {
+                            var env = JsonSerializer.Deserialize<SocketEnvelope<PartySetInput>>(msg);
+                            if (env.data != null)
+                                SetParty(clientId, string.IsNullOrWhiteSpace(env.data.partyId) ? null : env.data.partyId!.Trim());
+                        }
+                        catch { /* ignore */ }
+                        return;
+                    }
+
+                case "mob_hit":
+                    {
+                        try
+                        {
+                            var env = JsonSerializer.Deserialize<SocketEnvelope<MobHitInput>>(msg);
+                            if (env.data == null) return;
+
+                            if (!_playersMap.TryGetValue(clientId, out var map)) return;
+                            if (!_areas.TryGetValue(map, out var areaState)) return;
+
+                            // aplica dano no mob certo
+                            var mobs = areaState.Mobs.ToList();
+                            var idx = mobs.FindIndex(m => m.idmob == env.data.id);
+                            if (idx == -1) return;
+
+                            var mob = mobs[idx];
+                            var newLife = Math.Max(0, mob.life - env.data.dmg);
+                            bool died = newLife <= 0;
+
+                            List<object> updates = new();
+                            List<string> removes = new();
+                            if (died)
+                            {
+                                removes.Add(mob.idmob);
+                                mobs.RemoveAt(idx);
+                            }
+                            else
+                            {
+                                mob = mob with { life = newLife };
+                                mobs[idx] = mob;
+                                updates.Add(new { id = mob.idmob, life = mob.life });
+                            }
+
+                            // commit nova versão da área
+                            var newArea = areaState with { Version = areaState.Version + 1, Mobs = mobs.ToArray() };
+                            var newDict = new Dictionary<string, AreaState>(_areas, StringComparer.OrdinalIgnoreCase) { [map] = newArea };
+                            _areas = newDict;
+
+                            // broadcast delta
+                            var deltaPayload = new
+                            {
+                                type = "mob_delta",
+                                map = newArea.Map,
+                                v = newArea.Version,
+                                adds = Array.Empty<object>(),
+                                updates,
+                                removes
+                            };
+                            var jsonDelta = JsonSerializer.Serialize(deltaPayload, _json);
+                            await BroadcastAllAsync(jsonDelta, map, ct);
+
+                            // XP se morreu
+                            if (died)
+                            {
+                                var xp = ComputeMobXp(mob);
+                                await AwardXpAsync(clientId, xp, map, ct);
+                            }
+                        }
+                        catch { /* ignore */ }
+                        return;
+                    }
 
                 default:
                     return;
@@ -460,6 +542,79 @@ namespace ServidorLocal
             var json = JsonSerializer.Serialize(deltaPayload, _json);
             await BroadcastAllAsync(json, map, ct); // já filtra por mapa. :contentReference[oaicite:4]{index=4}
         }
+
+
+        /* PARTY */
+
+        private static void SetParty(string playerId, string? partyId)
+        {
+            // remove de party anterior
+            if (_partyOfPlayer.TryGetValue(playerId, out var old) && !string.IsNullOrEmpty(old))
+                if (_partyMembers.TryGetValue(old!, out var oldSet)) lock (oldSet) oldSet.Remove(playerId);
+
+            // define nova
+            if (string.IsNullOrWhiteSpace(partyId))
+            {
+                _partyOfPlayer[playerId] = null;
+                return;
+            }
+
+            _partyOfPlayer[playerId] = partyId;
+            var set = _partyMembers.GetOrAdd(partyId, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            lock (set) set.Add(playerId);
+        }
+
+        private static int ComputeMobXp(in MobData m)
+        {
+            // regra simples: tipo e área influenciam
+            var baseXp = 10 * (m.tipo + 1) + 5 * (m.area + 1);
+            return Math.Max(5, baseXp);
+        }
+
+        private static async Task SendToClientAsync(string playerId, string text, CancellationToken ct)
+        {
+            if (_clients.TryGetValue(playerId, out var ws) && ws.State == WebSocketState.Open)
+            {
+                await ws.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, true, ct);
+            }
+        }
+
+        private static async Task AwardXpAsync(string killerId, int totalXp, string map, CancellationToken ct)
+        {
+            // quem participa do split?
+            var partyId = _partyOfPlayer.TryGetValue(killerId, out var p) ? p : null;
+
+            List<string> recipients;
+            if (string.IsNullOrWhiteSpace(partyId))
+            {
+                recipients = new List<string> { killerId };
+            }
+            else
+            {
+                // todos online, e (opcional) no mesmo mapa
+                if (_partyMembers.TryGetValue(partyId!, out var set))
+                    recipients = set.Where(pid => _clients.ContainsKey(pid) &&
+                                                  _playersMap.TryGetValue(pid, out var m) && m == map).ToList();
+                else
+                    recipients = new List<string> { killerId };
+                if (recipients.Count == 0) recipients.Add(killerId);
+            }
+
+            var per = Math.Max(1, totalXp / recipients.Count);
+            var remainder = Math.Max(0, totalXp - per * recipients.Count);
+
+            foreach (var (pid, idx) in recipients.Select((id, i) => (id, i)))
+            {
+                var gain = per + (idx < remainder ? 1 : 0);
+                var payload = JsonSerializer.Serialize(new
+                {
+                    type = "xp_gain",
+                    data = new { player = pid, amount = gain }
+                }, _json);
+                await SendToClientAsync(pid, payload, ct);
+            }
+        }
+
 
 
         // -------------------- Broadcasts (Players) --------------------
