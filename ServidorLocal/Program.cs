@@ -144,7 +144,7 @@ namespace ServidorLocal
             if (_playersMap.TryGetValue(init.Value.idplayer, out var map))
             {
                 await SendMobSnapshotAsync(socket, map, ct);
-                await BroadcastPlayersOfMapAsync(map, ct);
+                await BroadcastPlayerConnectedAsync(_players[init.Value.idplayer], ct);
             }
 
             await HandleClientLoopAsync(socket, init.Value.idplayer, ct);
@@ -273,7 +273,7 @@ namespace ServidorLocal
             _players.TryRemove(clientId, out var removed);
             OnPlayerDisconnected?.Invoke(clientId);
 
-            var message = JsonSerializer.Serialize(new { type = "disconnect", data = removed }, _json);
+            var message = JsonSerializer.Serialize(new { type = "disconnect", data = removed });
             await BroadcastRawAsync(message, null, ct);
         }
 
@@ -661,7 +661,36 @@ namespace ServidorLocal
                 Console.WriteLine($"Erro no broadcast de players do mapa '{map}': {ex.Message}");
             }
         }
+        private static async Task BroadcastPlayerConnectedAsync(PlayerData clientId, CancellationToken ct)
+        {
 
+
+            foreach (var kvp in _clients)
+            {
+                foreach (var pToSend in _clients)
+                {
+                    Console.WriteLine($"Cliente {kvp.Key} conectou enviando para {pToSend}");
+                    var message = JsonSerializer.Serialize(new { type = "connect", data = _players[pToSend.Key] });
+                    var bytes = Encoding.UTF8.GetBytes(message);
+
+                    if (kvp.Value.State == WebSocketState.Open)
+                    {
+                        try
+                        {
+                            await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+                        }
+                        catch { /* ignore */ }
+                    }
+                }
+            }
+
+        }
+
+        private static async Task BroadcastPlayerDisconnectedAsync(PlayerData clientId, CancellationToken ct)
+        {
+            var message = JsonSerializer.Serialize(new { type = "disconnect", data = clientId });
+            await BroadcastRawAsync(message, null, ct);
+        }
         // -------------------- Broadcast Genérico --------------------
         private static async Task BroadcastRawAsync(string text, string? excludeClientId, CancellationToken ct)
         {
