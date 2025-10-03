@@ -30,8 +30,8 @@ namespace ServidorLocal
         private static SpawnData area4 = new(-50f, -50f, 0, Array.Empty<MobData>(), "mapa");
         private static SpawnData[] _spawnConfigs = new[] { area1, area2, area3, area4 };
 
-        private readonly record struct MobDamageInput(string id, float damage);
-        private sealed class MobHitInput { public string id { get; set; } = ""; public float dmg { get; set; } }
+        private readonly record struct MobDamageInput(string idmob, float damage);
+        private sealed class MobHitInput { public string idmob { get; set; } = ""; public float dmg { get; set; } }
         private sealed class PartySetInput { public string? partyId { get; set; } }
 
         // Party state
@@ -143,7 +143,7 @@ namespace ServidorLocal
             // snapshot inicial para o mapa do jogador
             if (_playersMap.TryGetValue(init.Value.idplayer, out var map))
             {
-                await SendMobSnapshotAsync(socket, map, ct);
+                // await SendMobSnapshotAsync(socket, map, ct);
 
             }
             await BroadcastPlayerConnectedAsync(_players[init.Value.idplayer], ct);
@@ -153,9 +153,9 @@ namespace ServidorLocal
         // -------------------- Helper de normalização (wire DTO) --------------------
         private static object ToWire(MobData m) => new
         {
-            id = m.idmob,
-            x = m.posx,
-            y = m.posy,
+            idmob = m.idmob,
+            posx = m.posx,
+            posy = m.posy,
             life = m.life,
             tipo = m.tipo,
             area = m.area
@@ -420,22 +420,23 @@ namespace ServidorLocal
                     {
                         try
                         {
+
                             var env = JsonSerializer.Deserialize<SocketEnvelope<MobHitInput>>(msg);
                             if (env.data == null) return;
-
+                            Console.WriteLine(msg);
                             if (!_playersMap.TryGetValue(clientId, out var map)) return;
                             if (!_areas.TryGetValue(map, out var areaState)) return;
 
                             // aplica dano no mob certo
                             var mobs = areaState.Mobs.ToList();
-                            var idx = mobs.FindIndex(m => m.idmob == env.data.id);
+                            var idx = mobs.FindIndex(m => m.idmob == env.data.idmob);
                             if (idx == -1) return;
 
                             var mob = mobs[idx];
                             var newLife = Math.Max(0, mob.life - env.data.dmg);
                             bool died = newLife <= 0;
 
-                            List<object> updates = new();
+                            List<MobData> updates = new();
                             List<string> removes = new();
                             if (died)
                             {
@@ -446,14 +447,14 @@ namespace ServidorLocal
                             {
                                 mob = mob with { life = newLife };
                                 mobs[idx] = mob;
-                                updates.Add(new { id = mob.idmob, life = mob.life });
+                                updates.Add(new MobData { idmob = mob.idmob, posx = mob.posx, posy = mob.posy, life = mob.life, tipo = mob.tipo, area = mob.area });
                             }
 
                             // commit nova versão da área
                             var newArea = areaState with { Version = areaState.Version + 1, Mobs = mobs.ToArray() };
                             var newDict = new Dictionary<string, AreaState>(_areas, StringComparer.OrdinalIgnoreCase) { [map] = newArea };
                             _areas = newDict;
-
+                            Console.WriteLine(updates.Count);
                             // broadcast delta
                             var deltaPayload = new
                             {
@@ -464,7 +465,7 @@ namespace ServidorLocal
                                 updates,
                                 removes
                             };
-                            var jsonDelta = JsonSerializer.Serialize(deltaPayload, _json);
+                            var jsonDelta = JsonSerializer.Serialize(deltaPayload);
                             await BroadcastAllAsync(jsonDelta, map, ct);
 
                             // XP se morreu
@@ -587,17 +588,6 @@ namespace ServidorLocal
             foreach (var r in recipients)
                 await SendToClientAsync(r, announceJson, ct);
 
-            // E um pacote por-player (compat com clientes que esperam por jogador/amount)
-            foreach (var (pid, idx) in recipients.Select((id, i) => (id, i)))
-            {
-                var gain = per + (idx < remainder ? 1 : 0);
-                var payload = JsonSerializer.Serialize(new
-                {
-                    type = "xp_gain",
-                    data = new { player = pid, amount = gain }
-                }, _json);
-                await SendToClientAsync(pid, payload, ct);
-            }
         }
 
         // -------------------- Broadcasts (Players) --------------------
@@ -883,9 +873,9 @@ namespace ServidorLocal
                         // updates como "patch": envia somente campos mutáveis
                         updates.Add(new
                         {
-                            id = cur.idmob,
-                            x = (prev.posx != cur.posx) ? cur.posx : (float?)null,
-                            y = (prev.posy != cur.posy) ? cur.posy : (float?)null,
+                            idmob = cur.idmob,
+                            posx = (prev.posx != cur.posx) ? cur.posx : (float?)null,
+                            posyy = (prev.posy != cur.posy) ? cur.posy : (float?)null,
                             life = (prev.life != cur.life) ? cur.life : (float?)null,
                             tipo = (prev.tipo != cur.tipo) ? cur.tipo : (int?)null,
                             area = (prev.area != cur.area) ? cur.area : (int?)null
