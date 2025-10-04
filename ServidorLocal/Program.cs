@@ -157,6 +157,7 @@ namespace ServidorLocal
             posx = m.posx,
             posy = m.posy,
             life = m.life,
+            maxlife = m.maxlife,
             tipo = m.tipo,
             area = m.area
         };
@@ -310,6 +311,56 @@ namespace ServidorLocal
                 Console.WriteLine($"Erro cliente {clientId}: {ex.Message}");
                 await SafeCloseAndCleanupAsync(clientId, socket, ct);
             }
+        }
+
+
+        private static MobData MoveMobAI(MobData mob, List<PlayerData> playersInArea)
+        {
+            const float speed = 0.5f;       // velocidade do mob
+            const float aggroRange = 10f;   // distância máxima para perseguir o player
+
+            float dx = 0f, dy = 0f;
+
+            // Verifica players próximos
+            if (playersInArea.Count > 0)
+            {
+                PlayerData? target = null;
+                float closest = float.MaxValue;
+
+                foreach (var p in playersInArea)
+                {
+                    var dist = MathF.Sqrt((p.posx - mob.posx) * (p.posx - mob.posx) + (p.posy - mob.posy) * (p.posy - mob.posy));
+                    if (dist < closest)
+                    {
+                        closest = dist;
+                        target = p;
+                    }
+                }
+
+                if (target != null && closest <= aggroRange)
+                {
+                    // Movimento em direção ao player
+                    dx = target.Value.posx - mob.posx;
+                    dy = target.Value.posy - mob.posy;
+
+                    // Normaliza para manter a velocidade constante
+                    var len = MathF.Sqrt(dx * dx + dy * dy);
+                    if (len > 0.0001f)
+                    {
+                        dx = dx / len * speed;
+                        dy = dy / len * speed;
+                    }
+                }
+                // Atualiza posição
+                float newX = mob.posx + dx;
+                float newY = mob.posy + dy;
+
+
+                return mob with { posx = newX, posy = newY };
+            }
+            return mob;
+
+
         }
 
         // -------------------- Tratamento de texto --------------------
@@ -797,7 +848,20 @@ namespace ServidorLocal
                 }
 
                 var curr = list.Count;
-                if (curr >= MaxMobsPerArea) continue;
+                if (curr >= MaxMobsPerArea)
+                {
+
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        // Pega players no mesmo mapa e área
+                        var playersInArea = _players.Values
+                            .Where(p => _playersMap.TryGetValue(p.idplayer, out var m) && m == _spawnConfigs[areaIndex].Mapa)
+                            .ToList();
+
+                        list[i] = MoveMobAI(list[i], playersInArea);
+                    }
+                    continue;
+                }
 
                 var toSpawn = Math.Min(MaxMobsPerArea - curr, MaxPerTickPerArea);
                 var cfg = _spawnConfigs[areaIndex];
@@ -822,6 +886,7 @@ namespace ServidorLocal
                         Guid.NewGuid().ToString(),
                         x,   // implícito para float
                         y,   // implícito para float
+                        100 * (areaIndex + 1),
                         100 * (areaIndex + 1),
                         Random.Shared.Next(4),
                         areaIndex
@@ -873,7 +938,7 @@ namespace ServidorLocal
                         {
                             idmob = cur.idmob,
                             posx = (prev.posx != cur.posx) ? cur.posx : (float?)null,
-                            posyy = (prev.posy != cur.posy) ? cur.posy : (float?)null,
+                            posy = (prev.posy != cur.posy) ? cur.posy : (float?)null,
                             life = (prev.life != cur.life) ? cur.life : (float?)null,
                             tipo = (prev.tipo != cur.tipo) ? cur.tipo : (int?)null,
                             area = (prev.area != cur.area) ? cur.area : (int?)null
