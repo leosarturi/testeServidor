@@ -5,6 +5,7 @@ public readonly record struct MobData(
     float posx,
     float posy,
     float life,
+    float maxlife,
     int tipo,
     int area
 );
