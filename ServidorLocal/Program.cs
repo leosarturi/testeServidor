@@ -537,53 +537,40 @@ namespace ServidorLocal
 
         private static async Task SetPartyAsync(string playerId, string? partyIdOrNull, CancellationToken ct)
         {
-            // Remove de party anterior (se houver)
-            string? oldParty = null;
-
+            // 1) remover da party anterior (se houver)
             if (_partyOfPlayer.TryGetValue(playerId, out var prev) && !string.IsNullOrWhiteSpace(prev))
             {
-                oldParty = prev!;
                 if (_partyMembers.TryGetValue(prev!, out var oldSet))
                 {
                     lock (oldSet) oldSet.Remove(playerId);
-                    Console.WriteLine($"[Party] {playerId} saiu da party '{oldParty}'. Membros agora: {string.Join(", ", _partyMembers)}");
+                    // avisa o cara que saiu
+                    var leftPayload = new { type = "party_info", data = new { party = "", members = Array.Empty<string>() } };
+                    await SendToClientAsync(playerId, JsonSerializer.Serialize(leftPayload, _json), ct);
 
-                    var leavePayload = new { type = "party_info", data = new { party = "", members = _partyMembers } };
-                    await SendToClientAsync(playerId, JsonSerializer.Serialize(leavePayload), ct);
-
+                    // avisa os que ficaram
+                    var leftToOthers = new { type = "party_info", data = new { party = prev, members = oldSet.ToArray() } };
+                    var jsonLeftToOthers = JsonSerializer.Serialize(leftToOthers, _json);
+                    foreach (var m in oldSet) await SendToClientAsync(m, jsonLeftToOthers, ct);
                 }
             }
 
+            // 2) se foi só sair, encerra
             if (string.IsNullOrWhiteSpace(partyIdOrNull))
             {
                 _partyOfPlayer[playerId] = null;
-                if (oldParty != null && _partyMembers.TryGetValue(oldParty, out var setAfter))
-                {
-                    var remaining = string.Join(", ", setAfter);
-                    Console.WriteLine($"[Party] {playerId} saiu da party '{oldParty}'. Membros agora: {remaining}");
-                }
                 return;
             }
 
-            // Adiciona na nova party
+            // 3) adicionar na nova party e avisar TODO MUNDO da party
             _partyOfPlayer[playerId] = partyIdOrNull;
             var set = _partyMembers.GetOrAdd(partyIdOrNull!, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
             lock (set) set.Add(playerId);
 
-            var members = string.Join(", ", set);
-            Console.WriteLine($"[Party] {playerId} entrou na party '{partyIdOrNull}'. Membros: {members}");
-
-            // Responde SÓ para quem entrou, com a lista
-            if (_clients.TryGetValue(playerId, out var ws) && ws.State == WebSocketState.Open)
-            {
-                var payload = new
-                {
-                    type = "party_info",
-                    data = new { party = partyIdOrNull, members = set.ToArray() }
-                };
-                await ws.SendAsync(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, _json)), WebSocketMessageType.Text, true, ct);
-            }
+            var payload = new { type = "party_info", data = new { party = partyIdOrNull, members = set.ToArray() } };
+            var json = JsonSerializer.Serialize(payload, _json);
+            foreach (var m in set) await SendToClientAsync(m, json, ct);
         }
+
 
         private static int ComputeMobXp(in MobData m)
         {
@@ -603,28 +590,40 @@ namespace ServidorLocal
         // Divide XP igualmente entre membros da party do killer (no mesmo mapa). Se não houver party, tudo para o killer.
         private static async Task AwardXpAsync(string killerId, int totalXp, string map, CancellationToken ct)
         {
+            // Descobre se o killer tem party
             var partyId = _partyOfPlayer.TryGetValue(killerId, out var p) ? p : null;
 
             List<string> recipients;
             if (string.IsNullOrWhiteSpace(partyId))
             {
+                // Sem party: XP inteiro para o killer
                 recipients = new List<string> { killerId };
             }
             else
             {
+                // Com party: pega só quem está conectado e no MESMO mapa
                 if (_partyMembers.TryGetValue(partyId!, out var set))
-                    recipients = set.Where(pid => _clients.ContainsKey(pid) &&
-                                                  _playersMap.TryGetValue(pid, out var m) && m == map).ToList();
+                {
+                    // Se seu HashSet não for thread-safe, use lock(set)
+                    recipients = set
+                        .Where(pid => _clients.ContainsKey(pid) &&
+                                      _playersMap.TryGetValue(pid, out var m) && m == map)
+                        .ToList();
+                }
                 else
+                {
                     recipients = new List<string> { killerId };
+                }
 
+                // Se por algum motivo ninguém qualificar, garante pelo menos o killer
                 if (recipients.Count == 0) recipients.Add(killerId);
             }
 
-            var per = Math.Max(1, totalXp / recipients.Count);
-            var remainder = Math.Max(0, totalXp - per * recipients.Count);
+            // Divide igualmente entre os qualificados (1 => tudo; 2 => /2; 3 => /3; etc.)
+            var count = Math.Max(1, recipients.Count);
+            var per = Math.Max(1, totalXp / count); // parte fracionária é descartada (int)
 
-            // Também envia um pacote "xp_gain" resumido com todos os recipients (útil se quiser logar no cliente)
+            // Pacote único (mesmo 'per' para todos), enviado a cada recipient
             var announce = new
             {
                 type = "xp_gain",
@@ -634,9 +633,9 @@ namespace ServidorLocal
                 to = recipients
             };
             var announceJson = JsonSerializer.Serialize(announce, _json);
+
             foreach (var r in recipients)
                 await SendToClientAsync(r, announceJson, ct);
-
         }
 
         // -------------------- Broadcasts (Players) --------------------
