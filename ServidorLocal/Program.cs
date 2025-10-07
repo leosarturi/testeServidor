@@ -23,6 +23,12 @@ namespace ServidorLocal
         private static readonly ConcurrentDictionary<string, string> _playersMap = new();
         private static readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
 
+        private static readonly ConcurrentDictionary<string, long> _mobLastAttackAt = new();
+
+        private static readonly ConcurrentQueue<object> _forcedMobUpdates = new();
+
+
+
         // Config de spawn por "área" (quadrantes). Todos no mesmo mapa "mapa".
         private static SpawnData area1 = new(50f, 50f, 0, Array.Empty<MobData>(), "mapa");
         private static SpawnData area2 = new(-50f, 50f, 0, Array.Empty<MobData>(), "mapa");
@@ -32,6 +38,8 @@ namespace ServidorLocal
 
         private readonly record struct MobDamageInput(string idmob, float damage);
         private sealed class MobHitInput { public string idmob { get; set; } = ""; public float dmg { get; set; } }
+
+
         private sealed class PartySetInput { public string? partyId { get; set; } }
 
         // Party state
@@ -316,20 +324,27 @@ namespace ServidorLocal
 
         private static MobData MoveMobAI(MobData mob, List<PlayerData> playersInArea)
         {
-            const float speed = 0.5f;       // velocidade do mob
-            const float aggroRange = 10f;   // distância máxima para perseguir o player
+            const float speed = 0.5f;        // velocidade do mob
+            const float aggroRange = 10f;    // distância máxima para perseguir o player
+            const float attackRange = 1.6f;  // distância para ataque
+            const int attackDamage = 10;     // dano base
+            const int attackCooldownMs = 2000;
 
             float dx = 0f, dy = 0f;
 
-            // Verifica players próximos
             if (playersInArea.Count > 0)
             {
                 PlayerData? target = null;
                 float closest = float.MaxValue;
 
+                // Procura o player mais próximo
                 foreach (var p in playersInArea)
                 {
-                    var dist = MathF.Sqrt((p.posx - mob.posx) * (p.posx - mob.posx) + (p.posy - mob.posy) * (p.posy - mob.posy));
+                    var dist = MathF.Sqrt(
+                        (p.posx - mob.posx) * (p.posx - mob.posx) +
+                        (p.posy - mob.posy) * (p.posy - mob.posy)
+                    );
+
                     if (dist < closest)
                     {
                         closest = dist;
@@ -337,30 +352,64 @@ namespace ServidorLocal
                     }
                 }
 
+                // Se encontrou e está no raio de aggro
                 if (target != null && closest <= aggroRange)
                 {
                     // Movimento em direção ao player
                     dx = target.Value.posx - mob.posx;
                     dy = target.Value.posy - mob.posy;
 
-                    // Normaliza para manter a velocidade constante
+                    // Normaliza para manter velocidade constante
                     var len = MathF.Sqrt(dx * dx + dy * dy);
                     if (len > 0.0001f)
                     {
                         dx = dx / len * speed;
                         dy = dy / len * speed;
                     }
+
+                    if (closest <= attackRange)
+                    {
+                        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                        var last = _mobLastAttackAt.TryGetValue(mob.idmob, out var v) ? v : 0L;
+
+                        if (now - last >= attackCooldownMs)
+                        {
+                            _mobLastAttackAt[mob.idmob] = now; // inicia cooldown
+
+                            if (_players.TryGetValue(target.Value.idplayer, out var playerData))
+                            {
+                                var newVida = Math.Max(0, playerData.status.vida - attackDamage);
+                                var updated = playerData with
+                                {
+                                    status = playerData.status with { vida = newVida }
+                                };
+                                _players[playerData.idplayer] = updated;
+
+                                // broadcast do dano ao player
+                                var payload = new
+                                {
+                                    type = "player",
+                                    data = new[] { updated }
+                                };
+                                var json = JsonSerializer.Serialize(payload, _json);
+                                _ = BroadcastAllAsync(json, _playersMap[playerData.idplayer], CancellationToken.None);
+
+                                // adiciona update do mob para acionar animação no cliente
+                                var mobUpdate = new { idmob = mob.idmob, action = "attack", target = playerData.idplayer };
+                                _forcedMobUpdates.Enqueue(mobUpdate);
+                                Console.WriteLine($"[MOB] {mob.idmob} atacou {playerData.idplayer} causando {attackDamage} de dano (vida={newVida}).");
+                            }
+                        }
+                    }
                 }
+
                 // Atualiza posição
                 float newX = mob.posx + dx;
                 float newY = mob.posy + dy;
-
-
                 return mob with { posx = newX, posy = newY };
             }
+
             return mob;
-
-
         }
 
         // -------------------- Tratamento de texto --------------------
@@ -787,7 +836,9 @@ namespace ServidorLocal
 
                 // Snapshot antigo
                 var oldAreas = _areas;
-                var oldArea = oldAreas.TryGetValue(map, out var a) ? a : new AreaState(map, 0, Array.Empty<MobData>());
+                var oldArea = oldAreas.TryGetValue(map, out var a)
+                    ? a
+                    : new AreaState(map, 0, Array.Empty<MobData>());
 
                 // Gera novo array de mobs aplicando spawn por área (somente adicionar; regra simples)
                 var newMobs = UpdateMobsByAreas(oldArea.Mobs);
@@ -795,7 +846,13 @@ namespace ServidorLocal
                 // Calcula delta
                 var (adds, updates, removes, changed) = Diff(oldArea.Mobs, newMobs);
 
-                if (changed)
+                // drena updates forçados (ex.: action:"attack")
+                var forced = new List<object>();
+                while (_forcedMobUpdates.TryDequeue(out var u))
+                    forced.Add(u);
+
+                // Só envia se houve mudança real ou ações forçadas
+                if (changed || forced.Count > 0)
                 {
                     var newArea = oldArea with
                     {
@@ -810,23 +867,20 @@ namespace ServidorLocal
                     };
                     _areas = newDict;
 
-                    // Broadcast delta para quem está no mapa
                     var deltaPayload = new
                     {
                         type = "mob_delta",
                         map = newArea.Map,
                         v = newArea.Version,
                         adds = adds.Select(ToWire).ToArray(),
-                        updates,
+                        updates = updates.Concat(forced).ToArray(), // inclui ações (attack)
                         removes
                     };
-                    var json = JsonSerializer.Serialize(deltaPayload, _json);
-                    Console.WriteLine($"[Spawn] v={newArea.Version} adds={adds.Count} updates={updates.Count} removes={removes.Count}");
 
+                    var json = JsonSerializer.Serialize(deltaPayload, _json);
+                    Console.WriteLine($"[Spawn] v={newArea.Version} adds={adds.Count} updates={updates.Count + forced.Count} removes={removes.Count}");
                     await BroadcastAllAsync(json, map, stop);
                 }
-
-
             }
         }
 
