@@ -108,7 +108,6 @@ namespace ServidorLocal
         {
             var builder = WebApplication.CreateBuilder(args);
             builder.WebHost.UseUrls("http://0.0.0.0:443");
-
             var app = builder.Build();
             app.UseWebSockets();
 
@@ -143,7 +142,12 @@ namespace ServidorLocal
 
             var ct = context.RequestAborted;
             var init = await ReceiveFirstMessageAsync(socket, ct);
-            if (init == null) return;
+            Console.WriteLine($" mensagem inicial {init.Value.idplayer}");
+            if (init == null || init.Value.idplayer == null)
+            {
+
+                return;
+            }
 
             await SendClientIdAsync(socket, init.Value.idplayer, ct);
             RegisterClient(init.Value, socket);
@@ -226,6 +230,7 @@ namespace ServidorLocal
                 do
                 {
                     result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
+
                     if (result.MessageType == WebSocketMessageType.Close)
                         return null;
 
@@ -234,7 +239,9 @@ namespace ServidorLocal
                 while (!result.EndOfMessage);
 
                 var msg = Encoding.UTF8.GetString(ms.ToArray());
+                Console.WriteLine(msg);
                 var initData = JsonSerializer.Deserialize<PlayerData>(msg);
+                Console.WriteLine(initData);
                 return initData;
             }
             catch (Exception ex)
@@ -280,8 +287,13 @@ namespace ServidorLocal
 
             _clients.TryRemove(clientId, out _);
             _players.TryRemove(clientId, out var removed);
+            _playersMap.TryRemove(clientId, out _);
+            _partyOfPlayer.TryRemove(clientId, out _);
+            _partyMembers.TryRemove(clientId, out _);
+
             OnPlayerDisconnected?.Invoke(clientId);
             await BroadcastPlayerDisconnectedAsync(removed, ct);
+            socket.Dispose();
         }
 
         // -------------------- Loop de mensagens --------------------
@@ -322,12 +334,11 @@ namespace ServidorLocal
         }
 
 
-        private static MobData MoveMobAI(MobData mob, List<PlayerData> playersInArea)
+        private static MobData MoveMobAI(MobData mob, List<PlayerData> playersInArea, CancellationToken ct)
         {
             const float speed = 0.5f;        // velocidade do mob
             const float aggroRange = 10f;    // distância máxima para perseguir o player
-            const float attackRange = 1.6f;  // distância para ataque
-            const int attackDamage = 10;     // dano base
+            const float attackRange = 1.6f;  // distância para ataque     // dano base
             const int attackCooldownMs = 2000;
 
             float dx = 0f, dy = 0f;
@@ -375,33 +386,15 @@ namespace ServidorLocal
                         if (now - last >= attackCooldownMs)
                         {
                             _mobLastAttackAt[mob.idmob] = now; // inicia cooldown
+                            var data = new { type = "mob_attack", data = mob.idmob };
+                            var json = JsonSerializer.Serialize(data);
 
-                            if (_players.TryGetValue(target.Value.idplayer, out var playerData))
-                            {
-                                var newVida = Math.Max(0, playerData.status.vida - attackDamage);
-                                var updated = playerData with
-                                {
-                                    status = playerData.status with { vida = newVida }
-                                };
-                                _players[playerData.idplayer] = updated;
-
-                                // broadcast do dano ao player
-                                var payload = new
-                                {
-                                    type = "player",
-                                    data = new[] { updated }
-                                };
-                                var json = JsonSerializer.Serialize(payload, _json);
-                                _ = BroadcastAllAsync(json, _playersMap[playerData.idplayer], CancellationToken.None);
-
-                                // adiciona update do mob para acionar animação no cliente
-                                var mobUpdate = new { idmob = mob.idmob, action = "attack", target = playerData.idplayer };
-                                _forcedMobUpdates.Enqueue(mobUpdate);
-                                Console.WriteLine($"[MOB] {mob.idmob} atacou {playerData.idplayer} causando {attackDamage} de dano (vida={newVida}).");
-                            }
+                            _ = BroadcastAllAsync(json, target.Value.mapa, ct);
+                            Console.WriteLine($"[MOB] {mob.idmob} atacou");
                         }
                     }
                 }
+
 
                 // Atualiza posição
                 float newX = mob.posx + dx;
@@ -774,6 +767,7 @@ namespace ServidorLocal
         private static async Task BroadcastPlayerDisconnectedAsync(PlayerData clientId, CancellationToken ct)
         {
             var message = JsonSerializer.Serialize(new { type = "disconnect", data = clientId });
+            await SetPartyAsync(clientId.idplayer, null, ct);
             await BroadcastRawAsync(message, null, ct);
         }
         // -------------------- Broadcast Genérico --------------------
@@ -841,7 +835,7 @@ namespace ServidorLocal
                     : new AreaState(map, 0, Array.Empty<MobData>());
 
                 // Gera novo array de mobs aplicando spawn por área (somente adicionar; regra simples)
-                var newMobs = UpdateMobsByAreas(oldArea.Mobs);
+                var newMobs = UpdateMobsByAreas(oldArea.Mobs, stop);
 
                 // Calcula delta
                 var (adds, updates, removes, changed) = Diff(oldArea.Mobs, newMobs);
@@ -885,7 +879,7 @@ namespace ServidorLocal
         }
 
         // Gera a nova lista de mobs por áreas, respeitando limites por área.
-        private static MobData[] UpdateMobsByAreas(MobData[] currentAll)
+        private static MobData[] UpdateMobsByAreas(MobData[] currentAll, CancellationToken ct)
         {
             // Agrupa os mobs atuais por área (0..3)
             var byArea = currentAll
@@ -911,7 +905,7 @@ namespace ServidorLocal
                             .Where(p => _playersMap.TryGetValue(p.idplayer, out var m) && m == _spawnConfigs[areaIndex].Mapa)
                             .ToList();
 
-                        list[i] = MoveMobAI(list[i], playersInArea);
+                        list[i] = MoveMobAI(list[i], playersInArea, ct);
                     }
                     continue;
                 }
