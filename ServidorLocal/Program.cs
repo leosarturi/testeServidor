@@ -34,6 +34,11 @@ namespace ServidorLocal
         private static SpawnData area2 = new(-50f, 50f, 0, Array.Empty<MobData>(), "mapa");
         private static SpawnData area3 = new(50f, -50f, 0, Array.Empty<MobData>(), "mapa");
         private static SpawnData area4 = new(-50f, -50f, 0, Array.Empty<MobData>(), "mapa");
+
+        private static SpawnData dg1Area = new(30f, 30f, 0, Array.Empty<MobData>(), "dg1");
+        private static SpawnData dg2Area = new(30f, 30f, 0, Array.Empty<MobData>(), "dg2");
+        private static SpawnData dg3Area = new(30f, 30f, 0, Array.Empty<MobData>(), "dg3");
+        private static SpawnData dg4Area = new(30f, 30f, 0, Array.Empty<MobData>(), "dg4");
         private static SpawnData[] _spawnConfigs = new[] { area1, area2, area3, area4 };
 
         private readonly record struct MobDamageInput(string idmob, float damage);
@@ -55,8 +60,23 @@ namespace ServidorLocal
             new(StringComparer.OrdinalIgnoreCase)
             {
                 ["mapa"] = new AreaState("mapa", 0, Array.Empty<MobData>()),
-                ["cidade"] = new AreaState("cidade", 0, Array.Empty<MobData>())
+                ["cidade"] = new AreaState("cidade", 0, Array.Empty<MobData>()),
+                ["dg1"] = new AreaState("dg1", 0, Array.Empty<MobData>()),
+                ["dg2"] = new AreaState("dg2", 0, Array.Empty<MobData>()),
+                ["dg3"] = new AreaState("dg3", 0, Array.Empty<MobData>()),
+                ["dg4"] = new AreaState("dg4", 0, Array.Empty<MobData>())
             };
+
+        private static readonly Dictionary<string, SpawnData[]> _spawnByMap = new()
+        {
+            ["mapa"] = new[] { area1, area2, area3, area4 },
+            ["dg1"] = new[] { dg1Area },
+            ["dg2"] = new[] { dg2Area },
+            ["dg3"] = new[] { dg3Area },
+            ["dg4"] = new[] { dg4Area },
+
+            // "cidade" propositalmente sem entry para manter SEM mobs
+        };
 
         public static event Action<string>? OnPlayerConnected;
         public static event Action<string>? OnPlayerDisconnected;
@@ -826,67 +846,56 @@ namespace ServidorLocal
 
             while (await timer.WaitForNextTickAsync(stop))
             {
-                var map = "mapa";
-
-                // Snapshot antigo
-                var oldAreas = _areas;
-                var oldArea = oldAreas.TryGetValue(map, out var a)
-                    ? a
-                    : new AreaState(map, 0, Array.Empty<MobData>());
-
-                // Gera novo array de mobs aplicando spawn por área (somente adicionar; regra simples)
-                var newMobs = UpdateMobsByAreas(oldArea.Mobs, stop);
-
-                // Calcula delta
-                var (adds, updates, removes, changed) = Diff(oldArea.Mobs, newMobs);
-
-                // drena updates forçados (ex.: action:"attack")
-                var forced = new List<object>();
-                while (_forcedMobUpdates.TryDequeue(out var u))
-                    forced.Add(u);
-
-                // Só envia se houve mudança real ou ações forçadas
-                if (changed || forced.Count > 0)
+                foreach (var kv in _spawnByMap) // mapa com spawn
                 {
-                    var newArea = oldArea with
-                    {
-                        Version = oldArea.Version + 1,
-                        Mobs = newMobs
-                    };
+                    var map = kv.Key;
+                    var cfg = kv.Value;
 
-                    // swap dicionário
+                    var oldAreas = _areas;
+                    var oldArea = oldAreas.TryGetValue(map, out var a)
+                        ? a
+                        : new AreaState(map, 0, Array.Empty<MobData>());
+
+                    // <<< ALTERAÇÃO: passa a config do mapa >>>
+                    var newMobs = UpdateMobsByAreas(oldArea.Mobs, cfg, stop);
+
+                    var (adds, updates, removes, changed) = Diff(oldArea.Mobs, newMobs);
+                    if (!changed) continue;
+
+                    var newArea = oldArea with { Version = oldArea.Version + 1, Mobs = newMobs };
+
+                    // swap thread-safe
                     var newDict = new Dictionary<string, AreaState>(oldAreas, StringComparer.OrdinalIgnoreCase)
                     {
                         [map] = newArea
                     };
                     _areas = newDict;
 
+                    // Broadcast delta apenas para quem está nesse mapa
                     var deltaPayload = new
                     {
                         type = "mob_delta",
                         map = newArea.Map,
                         v = newArea.Version,
                         adds = adds.Select(ToWire).ToArray(),
-                        updates = updates.Concat(forced).ToArray(), // inclui ações (attack)
+                        updates,
                         removes
                     };
-
                     var json = JsonSerializer.Serialize(deltaPayload, _json);
-                    Console.WriteLine($"[Spawn] v={newArea.Version} adds={adds.Count} updates={updates.Count + forced.Count} removes={removes.Count}");
                     await BroadcastAllAsync(json, map, stop);
                 }
             }
         }
-
         // Gera a nova lista de mobs por áreas, respeitando limites por área.
-        private static MobData[] UpdateMobsByAreas(MobData[] currentAll, CancellationToken ct)
+        // Gera a nova lista de mobs por áreas, respeitando limites por área.
+        private static MobData[] UpdateMobsByAreas(MobData[] currentAll, SpawnData[] cfg, CancellationToken ct)
         {
-            // Agrupa os mobs atuais por área (0..3)
+            // Agrupa os mobs atuais por área (0..cfg.Length-1)
             var byArea = currentAll
                 .GroupBy(m => m.area)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
-            for (int areaIndex = 0; areaIndex < _spawnConfigs.Length; areaIndex++)
+            for (int areaIndex = 0; areaIndex < cfg.Length; areaIndex++)
             {
                 if (!byArea.TryGetValue(areaIndex, out var list))
                 {
@@ -897,12 +906,11 @@ namespace ServidorLocal
                 var curr = list.Count;
                 if (curr >= MaxMobsPerArea)
                 {
-
+                    // mover mobs (AI simples) em direção a players do MESMO MAPA
                     for (int i = 0; i < list.Count; i++)
                     {
-                        // Pega players no mesmo mapa e área
                         var playersInArea = _players.Values
-                            .Where(p => _playersMap.TryGetValue(p.idplayer, out var m) && m == _spawnConfigs[areaIndex].Mapa)
+                            .Where(p => _playersMap.TryGetValue(p.idplayer, out var m) && m == cfg[areaIndex].Mapa)
                             .ToList();
 
                         list[i] = MoveMobAI(list[i], playersInArea, ct);
@@ -911,32 +919,20 @@ namespace ServidorLocal
                 }
 
                 var toSpawn = Math.Min(MaxMobsPerArea - curr, MaxPerTickPerArea);
-                var cfg = _spawnConfigs[areaIndex];
+                var sCfg = cfg[areaIndex];
 
                 for (int i = 0; i < toSpawn; i++)
                 {
-                    int x, y;
-
-                    // X
-                    if (cfg.PosX >= 0)
-                        x = Random.Shared.Next(0, (int)cfg.PosX + 1);
-                    else
-                        x = Random.Shared.Next((int)cfg.PosX, 1);
-
-                    // Y
-                    if (cfg.PosY >= 0)
-                        y = Random.Shared.Next(0, (int)cfg.PosY + 1);
-                    else
-                        y = Random.Shared.Next((int)cfg.PosY, 1);
+                    int x = sCfg.PosX >= 0 ? Random.Shared.Next(0, (int)sCfg.PosX + 1) : Random.Shared.Next((int)sCfg.PosX, 1);
+                    int y = sCfg.PosY >= 0 ? Random.Shared.Next(0, (int)sCfg.PosY + 1) : Random.Shared.Next((int)sCfg.PosY, 1);
 
                     var mob = new MobData(
                         Guid.NewGuid().ToString(),
-                        x,   // implícito para float
-                        y,   // implícito para float
+                        x, y,
+                        100 * (areaIndex + 1),        // life/base simples (mude à vontade por DG)
                         100 * (areaIndex + 1),
-                        100 * (areaIndex + 1),
-                        Random.Shared.Next(4),
-                        areaIndex
+                        Random.Shared.Next(4),        // tipo aleatório (ou fixe por DG)
+                        areaIndex                     // área local (0 nas DGs)
                     );
 
                     list.Add(mob);
