@@ -41,6 +41,24 @@ namespace ServidorLocal
         private static SpawnData dg4Area = new(30f, 30f, 0, Array.Empty<MobData>(), "dg4");
         private static SpawnData[] _spawnConfigs = new[] { area1, area2, area3, area4 };
 
+        // Boss (por mapa)
+        private static readonly Dictionary<string, long> _bossNextRespawnAtMs = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dg1"] = 0
+        };
+
+        private static readonly Dictionary<string, long> _bossLastCombatMs = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dg1"] = 0
+        };
+
+        private const int BossTipo = 99;
+        private static readonly (int x, int y) BossSpawnDG1 = (10, 10);   // ajuste se quiser
+        private const int BossMaxLife = 1500;
+        private const int BossRegenPerTick = 30;         // ~30 a cada 200ms => 150/s
+        private static readonly TimeSpan BossOutOfCombat = TimeSpan.FromSeconds(10);
+        private static readonly TimeSpan BossRespawnDelay = TimeSpan.FromMinutes(3);
+
         private readonly record struct MobDamageInput(string idmob, float damage);
         private sealed class MobHitInput { public string idmob { get; set; } = ""; public float dmg { get; set; } }
 
@@ -549,8 +567,18 @@ namespace ServidorLocal
 
                             List<MobData> updates = new();
                             List<string> removes = new();
+
+                            if (mobs[idx].tipo == BossTipo)
+                            {
+                                _bossLastCombatMs["dg1"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                            }
                             if (died)
                             {
+
+                                if (mob.tipo == BossTipo)
+                                {
+                                    _bossNextRespawnAtMs["dg1"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + (long)BossRespawnDelay.TotalMilliseconds;
+                                }
                                 removes.Add(mob.idmob);
                                 mobs.RemoveAt(idx);
                             }
@@ -846,32 +874,41 @@ namespace ServidorLocal
 
             while (await timer.WaitForNextTickAsync(stop))
             {
-                foreach (var kv in _spawnByMap) // mapa com spawn
+                foreach (var kv in _spawnByMap) // mapas com spawn
                 {
                     var map = kv.Key;
                     var cfg = kv.Value;
 
+                    // pegue o snapshot atual da área ANTES de qualquer branch
                     var oldAreas = _areas;
                     var oldArea = oldAreas.TryGetValue(map, out var a)
                         ? a
                         : new AreaState(map, 0, Array.Empty<MobData>());
 
-                    // <<< ALTERAÇÃO: passa a config do mapa >>>
-                    var newMobs = UpdateMobsByAreas(oldArea.Mobs, cfg, stop);
+                    // calcule os mobs novos por mapa (boss em dg1, spawner normal nos demais)
+                    MobData[] newMobs;
+                    if (string.Equals(map, "dg1", StringComparison.OrdinalIgnoreCase))
+                    {
+                        newMobs = TickBossMap(oldArea.Mobs, stop); // sua função especial do boss
+                    }
+                    else
+                    {
+                        newMobs = UpdateMobsByAreas(oldArea.Mobs, cfg, stop); // spawner padrão
+                    }
 
+                    // diffs e early-out
                     var (adds, updates, removes, changed) = Diff(oldArea.Mobs, newMobs);
                     if (!changed) continue;
 
+                    // swap thread-safe do estado
                     var newArea = oldArea with { Version = oldArea.Version + 1, Mobs = newMobs };
-
-                    // swap thread-safe
                     var newDict = new Dictionary<string, AreaState>(oldAreas, StringComparer.OrdinalIgnoreCase)
                     {
                         [map] = newArea
                     };
                     _areas = newDict;
 
-                    // Broadcast delta apenas para quem está nesse mapa
+                    // broadcast apenas para quem está no mapa
                     var deltaPayload = new
                     {
                         type = "mob_delta",
@@ -881,11 +918,57 @@ namespace ServidorLocal
                         updates,
                         removes
                     };
-                    var json = JsonSerializer.Serialize(deltaPayload, _json);
+                    var json = System.Text.Json.JsonSerializer.Serialize(deltaPayload, _json);
                     await BroadcastAllAsync(json, map, stop);
                 }
             }
         }
+
+
+        private static MobData[] TickBossMap(MobData[] current, CancellationToken ct)
+        {
+            var list = current.ToList();
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+            // existe Boss vivo?
+            var idx = list.FindIndex(m => m.tipo == BossTipo);
+            if (idx == -1)
+            {
+                // não existe: tenta respawn se já passou o tempo
+                if (now >= _bossNextRespawnAtMs["dg1"])
+                {
+                    var boss = new MobData(
+                        Guid.NewGuid().ToString(),
+                        BossSpawnDG1.x, BossSpawnDG1.y,
+                        BossMaxLife, BossMaxLife,
+                        BossTipo, 0
+                    );
+                    list.Add(boss);
+
+                    // define "last combat" antigo para permitir regen se ficar parado
+                    _bossLastCombatMs["dg1"] = now;
+                }
+                return list.ToArray();
+            }
+
+            // existe: regen se ficar 10s sem combate
+            var b = list[idx];
+            if (b.life > 0)
+            {
+                if (now - _bossLastCombatMs["dg1"] >= (long)BossOutOfCombat.TotalMilliseconds && b.life < b.maxlife)
+                {
+                    var nl = System.Math.Min(b.maxlife, b.life + BossRegenPerTick);
+                    list[idx] = b with { life = nl };
+                }
+            }
+            else
+            {
+                // vida <= 0 será removido pelo handler de mob_hit
+            }
+
+            return list.ToArray();
+        }
+
         // Gera a nova lista de mobs por áreas, respeitando limites por área.
         // Gera a nova lista de mobs por áreas, respeitando limites por área.
         private static MobData[] UpdateMobsByAreas(MobData[] currentAll, SpawnData[] cfg, CancellationToken ct)
