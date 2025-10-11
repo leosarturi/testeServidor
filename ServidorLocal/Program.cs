@@ -374,10 +374,18 @@ namespace ServidorLocal
 
         private static MobData MoveMobAI(MobData mob, List<PlayerData> playersInArea, CancellationToken ct)
         {
-            const float speed = 0.5f;        // velocidade do mob
-            const float aggroRange = 10f;    // distância máxima para perseguir o player
-            const float attackRange = 1.6f;  // distância para ataque     // dano base
-            const int attackCooldownMs = 2000;
+
+            float speed = 0.5f;        // velocidade do mob
+            float aggroRange = 10f;    // distância máxima para perseguir o player
+            float attackRange = 1.6f;  // distância para ataque     // dano base
+            int attackCooldownMs = 2000;
+            if (mob.tipo > 50)
+            {
+                speed = 0.3f;
+                aggroRange = 500f;
+                attackRange = 50f;
+                attackCooldownMs = 1000;
+            }
 
             float dx = 0f, dy = 0f;
 
@@ -889,7 +897,8 @@ namespace ServidorLocal
                     MobData[] newMobs;
                     if (string.Equals(map, "dg1", StringComparison.OrdinalIgnoreCase))
                     {
-                        newMobs = TickBossMap(oldArea.Mobs, stop); // sua função especial do boss
+                        newMobs = TickBossMap(oldArea.Mobs, stop);
+                        newMobs = UpdateMobsByAreas(newMobs, cfg, stop);
                     }
                     else
                     {
@@ -987,6 +996,10 @@ namespace ServidorLocal
                 }
 
                 var curr = list.Count;
+                if (list.Count() > 0)
+                {
+                    if (list.First().tipo > 50) curr += 99;
+                }
                 if (curr >= MaxMobsPerArea)
                 {
                     // mover mobs (AI simples) em direção a players do MESMO MAPA
