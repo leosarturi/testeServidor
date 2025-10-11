@@ -620,6 +620,8 @@ namespace ServidorLocal
                             {
                                 var xp = ComputeMobXp(mob);
                                 await AwardXpAsync(clientId, xp, map, ct);
+                                var loot = ComputeMobLoot(mob);
+                                await AwardLootAsync(clientId, loot, map, ct);
                             }
                         }
                         catch { /* ignore */ }
@@ -677,12 +679,88 @@ namespace ServidorLocal
             return Math.Max(5, baseXp);
         }
 
+        private static MobLoot ComputeMobLoot(MobData m)
+        {
+            // regra simples: tipo e área influenciam
+            int currency = 0;
+            int item = 0;
+            while (Random.Shared.NextInt64(100) < 20)
+            {
+                currency++;
+            }
+
+            while (Random.Shared.NextInt64(100) < 1)
+            {
+                item++;
+            }
+
+            return new MobLoot(currency, item);
+        }
         private static async Task SendToClientAsync(string playerId, string text, CancellationToken ct)
         {
             if (_clients.TryGetValue(playerId, out var ws) && ws.State == WebSocketState.Open)
             {
                 await ws.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, true, ct);
             }
+        }
+        private static async Task AwardLootAsync(string killerId, MobLoot mobLoot, string map, CancellationToken ct)
+        {
+            var partyId = _partyOfPlayer.TryGetValue(killerId, out var p) ? p : null;
+
+            List<string> recipients;
+            if (string.IsNullOrWhiteSpace(partyId))
+            {
+                recipients = new List<string> { killerId };
+            }
+            else if (_partyMembers.TryGetValue(partyId!, out var set))
+            {
+                recipients = set
+                    .Where(pid => _clients.ContainsKey(pid) &&
+                                  _playersMap.TryGetValue(pid, out var m) && m == map)
+                    .ToList();
+
+                if (recipients.Count == 0) recipients.Add(killerId);
+            }
+            else
+            {
+                recipients = new List<string> { killerId };
+            }
+
+            var count = Math.Max(1, recipients.Count);
+
+            // quantidade total de loot
+            int totalCurrency = mobLoot.currency;
+            int totalItems = mobLoot.item;
+
+            // dividir loot entre membros
+            var perCurrency = totalCurrency / count;
+            var remainderCurrency = totalCurrency % count;
+
+            var perItem = totalItems / count;
+            var remainderItem = totalItems % count;
+
+            for (int i = 0; i < recipients.Count; i++)
+            {
+
+
+                int thisCurrency = perCurrency + (i < remainderCurrency ? 1 : 0);
+                int thisItem = perItem + (i < remainderItem ? 1 : 0);
+                var playerLoot = new
+                {
+                    type = "loot_gain",
+                    who = killerId,
+                    to = recipients[i],
+                    loot = new
+                    {
+                        currency = thisCurrency,
+                        item = thisItem
+                    }
+                };
+
+                var lootJson = JsonSerializer.Serialize(playerLoot, _json);
+                await SendToClientAsync(recipients[i], lootJson, ct);
+            }
+
         }
 
         // Divide XP igualmente entre membros da party do killer (no mesmo mapa). Se não houver party, tudo para o killer.

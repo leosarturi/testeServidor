@@ -5,7 +5,9 @@ public readonly record struct PlayerData(
     float posx,
     float posy,
     string mapa,
-    PlayerStatus status
+    PlayerStatus status,
+    string nick
+
 );
 
 

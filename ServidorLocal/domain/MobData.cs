@@ -9,3 +9,8 @@ public readonly record struct MobData(
     int tipo,
     int area
 );
+
+public readonly record struct MobLoot(
+    int currency,
+    int item
+);
