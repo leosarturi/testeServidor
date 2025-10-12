@@ -162,10 +162,13 @@ namespace ServidorLocal
         {
             if (!context.WebSockets.IsWebSocketRequest)
             {
+
                 context.Response.StatusCode = 400;
                 await context.Response.WriteAsync("WebSocket expected");
                 return;
             }
+            context.Response.Headers.Add("Access-Control-Allow-Origin", "*");
+            context.Response.Headers.Add("Access-Control-Allow-Headers", "content-type");
 
             WebSocket? socket = null;
             try
