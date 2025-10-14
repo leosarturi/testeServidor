@@ -167,8 +167,8 @@ namespace ServidorLocal
                 await context.Response.WriteAsync("WebSocket expected");
                 return;
             }
-            context.Response.Headers.Add("Access-Control-Allow-Origin", "*");
-            context.Response.Headers.Add("Access-Control-Allow-Headers", "content-type");
+            context.Response.Headers.Append("Access-Control-Allow-Origin", "*");
+            context.Response.Headers.Append("Access-Control-Allow-Headers", "content-type");
 
             WebSocket? socket = null;
             try
@@ -687,12 +687,12 @@ namespace ServidorLocal
             // regra simples: tipo e área influenciam
             int currency = 0;
             int item = 0;
-            while (Random.Shared.NextInt64(100) < 20)
+            while (Random.Shared.NextInt64(100) < 15)
             {
                 currency++;
             }
 
-            while (Random.Shared.NextInt64(100) < 1)
+            while (Random.Shared.NextInt64(100) < 3)
             {
                 item++;
             }
