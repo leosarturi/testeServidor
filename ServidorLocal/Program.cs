@@ -979,7 +979,7 @@ namespace ServidorLocal
                     if (string.Equals(map, "dg1", StringComparison.OrdinalIgnoreCase))
                     {
                         newMobs = TickBossMap(oldArea.Mobs, stop);
-                        newMobs = UpdateMobsByAreas(newMobs, cfg, stop);
+                        newMobs = UpdateMobsByAreas(newMobs, cfg, stop, true);
                     }
                     else
                     {
@@ -1061,7 +1061,7 @@ namespace ServidorLocal
 
         // Gera a nova lista de mobs por áreas, respeitando limites por área.
         // Gera a nova lista de mobs por áreas, respeitando limites por área.
-        private static MobData[] UpdateMobsByAreas(MobData[] currentAll, SpawnData[] cfg, CancellationToken ct)
+        private static MobData[] UpdateMobsByAreas(MobData[] currentAll, SpawnData[] cfg, CancellationToken ct, bool bossMap = false)
         {
             // Agrupa os mobs atuais por área (0..cfg.Length-1)
             var byArea = currentAll
@@ -1077,11 +1077,7 @@ namespace ServidorLocal
                 }
 
                 var curr = list.Count;
-                if (list.Count() > 0)
-                {
-                    if (list.First().tipo > 50) curr += 99;
-                }
-                if (curr >= MaxMobsPerArea)
+                if (curr >= MaxMobsPerArea || bossMap)
                 {
                     // mover mobs (AI simples) em direção a players do MESMO MAPA
                     for (int i = 0; i < list.Count; i++)
