@@ -27,7 +27,99 @@ namespace ServidorLocal
 
         private static readonly ConcurrentQueue<object> _forcedMobUpdates = new();
 
+        // -------------------- Auction house --------------------
+        private static readonly string AUCTIONS_FILE = Path.Combine(AppContext.BaseDirectory, "auctions.json");
+        private sealed record AuctionEntry(string ownerId, int price, JsonElement item, long createdAt);
+        private static readonly List<AuctionEntry> _auctions = new();
+        private static readonly object _auctionsLock = new();
+        private static ConcurrentDictionary<string, int> sellsToSend = new();
 
+        private sealed class SellInput { public required string ownerId { get; set; } public int price { get; set; } public required JsonElement item { get; set; } }
+        private sealed class BuyInput { public required string buyerId { get; set; } public required int index { get; set; } }
+
+        private static void LoadAuctions()
+        {
+            try
+            {
+                lock (_auctionsLock)
+                {
+                    if (!File.Exists(AUCTIONS_FILE)) return;
+                    var json = File.ReadAllText(AUCTIONS_FILE);
+                    var arr = JsonSerializer.Deserialize<List<AuctionEntry>>(json);
+                    if (arr is not null)
+                    {
+                        _auctions.Clear();
+                        _auctions.AddRange(arr);
+                    }
+                }
+            }
+            catch { /* ignore load errors */ }
+        }
+
+        private static void SaveAuctions()
+        {
+            try
+            {
+                lock (_auctionsLock)
+                {
+                    var json = JsonSerializer.Serialize(_auctions);
+                    File.WriteAllText(AUCTIONS_FILE, json);
+                }
+            }
+            catch { /* ignore save errors */ }
+        }
+
+        private static async Task SendJsonToPlayerAsync(string playerIdOrClientId, object payload, CancellationToken ct)
+        {
+            try
+            {
+
+                // fallback: treat input as clientKey
+                if (_clients.TryGetValue(playerIdOrClientId, out var ws2) && ws2.State == WebSocketState.Open)
+                {
+                    var json = JsonSerializer.Serialize(payload);
+                    var buffer = Encoding.UTF8.GetBytes(json);
+                    await ws2.SendAsync(buffer, WebSocketMessageType.Text, true, ct);
+                }
+            }
+            catch { /* ignore send errors */ }
+        }
+
+        private static async Task SendSaleToPlayerAsync(string playerIdOrClientId, object payload, CancellationToken ct, int chaos)
+        {
+            try
+            {
+
+                // fallback: treat input as clientKey
+                if (_clients.TryGetValue(playerIdOrClientId, out var ws2) && ws2.State == WebSocketState.Open)
+                {
+                    var json = JsonSerializer.Serialize(payload);
+                    var buffer = Encoding.UTF8.GetBytes(json);
+                    await ws2.SendAsync(buffer, WebSocketMessageType.Text, true, ct);
+                }
+                else
+                {
+                    Console.WriteLine($"[AUCTION] Player {playerIdOrClientId} offline, queueing sell notification");
+                    sellsToSend.AddOrUpdate(playerIdOrClientId, chaos, (key, old) => old + chaos);
+                }
+            }
+            catch { /* ignore send errors */ }
+        }
+        private static async Task BroadcastJsonAsync(object payload, CancellationToken ct)
+        {
+            var json = JsonSerializer.Serialize(payload);
+            var buffer = Encoding.UTF8.GetBytes(json);
+            var tasks = new List<Task>();
+            foreach (var kv in _clients)
+            {
+                var ws = kv.Value;
+                if (ws?.State == WebSocketState.Open)
+                {
+                    tasks.Add(ws.SendAsync(buffer, WebSocketMessageType.Text, true, ct));
+                }
+            }
+            try { await Task.WhenAll(tasks); } catch { /* ignore individual send errors */ }
+        }
 
         // Config de spawn por "área" (quadrantes). Todos no mesmo mapa "mapa".
         private static SpawnData area1 = new(50f, 50f, 0, Array.Empty<MobData>(), "mapa");
@@ -149,6 +241,9 @@ namespace ServidorLocal
             var app = builder.Build();
             app.UseWebSockets();
 
+            // load persisted auctions
+            LoadAuctions();
+
             OnPlayerConnected += id => Console.WriteLine($"[Evento] Player conectado: {id}");
             OnPlayerDisconnected += id => Console.WriteLine($"[Evento] Player desconectado: {id}");
             _ = RunGameLoopAsync(app.Lifetime.ApplicationStopping);
@@ -199,7 +294,13 @@ namespace ServidorLocal
                 // await SendMobSnapshotAsync(socket, map, ct);
 
             }
+            if (sellsToSend.TryGetValue(init.Value.idplayer, out var chaosToSend))
+            {
+                await SendSaleToPlayerAsync(init.Value.idplayer, new { type = "item_sold", price = chaosToSend }, ct, chaosToSend);
+                sellsToSend.TryRemove(init.Value.idplayer, out _);
+            }
             await BroadcastPlayerConnectedAsync(_players[init.Value.idplayer], ct);
+
             await HandleClientLoopAsync(socket, init.Value.idplayer, ct);
         }
 
@@ -253,7 +354,7 @@ namespace ServidorLocal
                 v = area.Version,
                 mobs = area.Mobs.Select(ToWire).ToArray()
             };
-            var json = JsonSerializer.Serialize(payload, _json);
+            var json = JsonSerializer.Serialize(payload);
 
             Console.WriteLine($"[Mob] SEND SNAPSHOT map={area.Map} v={area.Version} count={area.Mobs.Length}");
 
@@ -330,7 +431,7 @@ namespace ServidorLocal
             _players.TryRemove(clientId, out var removed);
             _playersMap.TryRemove(clientId, out _);
             _partyOfPlayer.TryRemove(clientId, out _);
-            _partyMembers.TryRemove(clientId, out _);
+            _ = SetPartyAsync(clientId, "", ct);
 
             OnPlayerDisconnected?.Invoke(clientId);
             await BroadcastPlayerDisconnectedAsync(removed, ct);
@@ -631,6 +732,90 @@ namespace ServidorLocal
                         return;
                     }
 
+                case "list_item":
+                    {
+
+                        List<object> list;
+                        lock (_auctionsLock)
+                        {
+                            list = _auctions.Select((a, i) => new { index = i, ownerId = a.ownerId, price = a.price, item = a.item }).ToList<object>();
+                        }
+
+
+                        var resp = new { type = "list_item", data = list };
+                        Console.WriteLine(resp);
+                        await SendJsonToPlayerAsync(clientId, resp, ct);
+                        return;
+                    }
+
+                case "sell_item":
+                    {
+                        Console.WriteLine(msg);
+                        try
+                        {
+                            var env = JsonSerializer.Deserialize<SocketEnvelope<SellInput>>(msg);
+                            Console.WriteLine("===");
+                            Console.WriteLine(env);
+                            Console.WriteLine("===");
+                            if (env.data == null)
+                            {
+                                return;
+                            }
+                            Console.WriteLine($"Tentando vender item {env.data.item} por {env.data.price}");
+                            var owner = clientId;
+                            var entry = new AuctionEntry(owner, env.data.price, env.data.item, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                            int index;
+                            lock (_auctionsLock)
+                            {
+                                _auctions.Add(entry);
+                                index = _auctions.Count - 1;
+                                SaveAuctions();
+                            }
+
+
+                        }
+                        catch (Exception e)
+                        {
+                            Console.WriteLine($"Erro ao vender item {e.Message}");
+                        }
+                        return;
+                    }
+
+                case "buy_item":
+                    {
+                        Console.WriteLine(msg);
+                        try
+                        {
+                            var env = JsonSerializer.Deserialize<SocketEnvelope<BuyInput>>(msg);
+                            if (env.data == null)
+                            {
+                                return;
+                            }
+                            Console.WriteLine($"Tentando comprar item {env.data.index} por {clientId}");
+                            AuctionEntry taken;
+                            lock (_auctionsLock)
+                            {
+                                var idx = env.data.index;
+                                if (idx < 0 || idx >= _auctions.Count)
+                                {
+
+                                    return;
+                                }
+                                taken = _auctions[idx];
+                                _auctions.RemoveAt(idx);
+                                SaveAuctions();
+                            }
+                            var data = new { type = "item_sold", price = taken.price };
+                            // deliver item to buyer (client who requested) and notify seller
+                            await SendSaleToPlayerAsync(taken.ownerId, data, ct, taken.price);
+
+                        }
+                        catch
+                        {
+                        }
+                        return;
+                    }
+
                 default:
                     return;
             }
@@ -648,11 +833,11 @@ namespace ServidorLocal
                     lock (oldSet) oldSet.Remove(playerId);
                     // avisa o cara que saiu
                     var leftPayload = new { type = "party_info", data = new { party = "", members = Array.Empty<string>() } };
-                    await SendToClientAsync(playerId, JsonSerializer.Serialize(leftPayload, _json), ct);
+                    await SendToClientAsync(playerId, JsonSerializer.Serialize(leftPayload), ct);
 
                     // avisa os que ficaram
                     var leftToOthers = new { type = "party_info", data = new { party = prev, members = oldSet.ToArray() } };
-                    var jsonLeftToOthers = JsonSerializer.Serialize(leftToOthers, _json);
+                    var jsonLeftToOthers = JsonSerializer.Serialize(leftToOthers);
                     foreach (var m in oldSet) await SendToClientAsync(m, jsonLeftToOthers, ct);
                 }
             }
@@ -663,14 +848,14 @@ namespace ServidorLocal
                 _partyOfPlayer[playerId] = null;
                 return;
             }
-
+            if (_partyMembers[partyIdOrNull].Count > 5) return;
             // 3) adicionar na nova party e avisar TODO MUNDO da party
             _partyOfPlayer[playerId] = partyIdOrNull;
             var set = _partyMembers.GetOrAdd(partyIdOrNull!, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
             lock (set) set.Add(playerId);
 
             var payload = new { type = "party_info", data = new { party = partyIdOrNull, members = set.ToArray() } };
-            var json = JsonSerializer.Serialize(payload, _json);
+            var json = JsonSerializer.Serialize(payload);
             foreach (var m in set) await SendToClientAsync(m, json, ct);
         }
 
@@ -760,7 +945,7 @@ namespace ServidorLocal
                     }
                 };
 
-                var lootJson = JsonSerializer.Serialize(playerLoot, _json);
+                var lootJson = JsonSerializer.Serialize(playerLoot);
                 await SendToClientAsync(recipients[i], lootJson, ct);
             }
 
@@ -811,7 +996,7 @@ namespace ServidorLocal
                 per = per,
                 to = recipients
             };
-            var announceJson = JsonSerializer.Serialize(announce, _json);
+            var announceJson = JsonSerializer.Serialize(announce);
 
             foreach (var r in recipients)
                 await SendToClientAsync(r, announceJson, ct);
@@ -831,8 +1016,8 @@ namespace ServidorLocal
                         {
                             type = "player",
                             data = _players.Values.ToList()
-                        },
-                        _json
+                        }
+
                     );
 
                     var bytes = Encoding.UTF8.GetBytes(data);
@@ -1008,7 +1193,7 @@ namespace ServidorLocal
                         updates,
                         removes
                     };
-                    var json = System.Text.Json.JsonSerializer.Serialize(deltaPayload, _json);
+                    var json = System.Text.Json.JsonSerializer.Serialize(deltaPayload);
                     await BroadcastAllAsync(json, map, stop);
                 }
             }
