@@ -1176,9 +1176,14 @@ namespace ServidorLocal
 
                     // calcule os mobs novos por mapa (boss em dg1, spawner normal nos demais)
                     MobData[] newMobs;
-                    if (map.Equals("dg1", StringComparison.OrdinalIgnoreCase) || map.Equals("dg2", StringComparison.OrdinalIgnoreCase))
+                    if (map.Equals("dg2", StringComparison.OrdinalIgnoreCase))
                     {
-                        newMobs = TickBossMap(oldArea.Mobs, stop);
+                        newMobs = TickBossMap(oldArea.Mobs, stop, "dg2");
+                        newMobs = UpdateMobsByAreas(newMobs, cfg, stop, true);
+                    }
+                    else if (map.Equals("dg1", StringComparison.OrdinalIgnoreCase))
+                    {
+                        newMobs = TickBossMap(oldArea.Mobs, stop, "dg1");
                         newMobs = UpdateMobsByAreas(newMobs, cfg, stop, true);
                     }
                     else
@@ -1228,67 +1233,78 @@ namespace ServidorLocal
         }
 
 
-        private static MobData[] TickBossMap(MobData[] current, CancellationToken ct)
+        private static MobData[] TickBossMap(MobData[] current, CancellationToken ct, string map)
         {
             var list = current.ToList();
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-            // ---------- DG1 ----------
+            switch (map)
             {
-                var idxDG1 = list.FindIndex(m => m.tipo == BossTipo);
-                if (idxDG1 == -1)
-                {
-                    if (now >= _bossNextRespawnAtMs["dg1"])
+                case "dg1":
                     {
-                        var boss = new MobData(
-                            Guid.NewGuid().ToString(),
-                            BossSpawnDG1.x, BossSpawnDG1.y,
-                            BossMaxLife, BossMaxLife,
-                            BossTipo, 0
-                        );
-                        list.Add(boss);
-                        _bossLastCombatMs["dg1"] = now;
+                        var idxDG1 = list.FindIndex(m => m.tipo == BossTipo);
+                        if (idxDG1 == -1)
+                        {
+                            if (now >= _bossNextRespawnAtMs["dg1"])
+                            {
+                                var boss = new MobData(
+                                    Guid.NewGuid().ToString(),
+                                    BossSpawnDG1.x, BossSpawnDG1.y,
+                                    BossMaxLife, BossMaxLife,
+                                    BossTipo, 0
+                                );
+                                list.Add(boss);
+                                _bossLastCombatMs["dg1"] = now;
+                            }
+                        }
+                        else
+                        {
+                            var b = list[idxDG1];
+                            if (b.life > 0 && now - _bossLastCombatMs["dg1"] >= (long)BossOutOfCombat.TotalMilliseconds && b.life < b.maxlife)
+                            {
+                                var nl = Math.Min(b.maxlife, b.life + BossRegenPerTick);
+                                list[idxDG1] = b with { life = nl };
+                            }
+                        }
                     }
-                }
-                else
-                {
-                    var b = list[idxDG1];
-                    if (b.life > 0 && now - _bossLastCombatMs["dg1"] >= (long)BossOutOfCombat.TotalMilliseconds && b.life < b.maxlife)
+                    break;
+                case "dg2":
                     {
-                        var nl = Math.Min(b.maxlife, b.life + BossRegenPerTick);
-                        list[idxDG1] = b with { life = nl };
+                        var idxDG2 = list.FindIndex(m => m.tipo == 100);
+                        if (idxDG2 == -1)
+                        {
+                            if (now >= _bossNextRespawnAtMs["dg2"])
+                            {
+                                var madGodBoss = new MobData(
+                                    Guid.NewGuid().ToString(),
+                                    BossSpawnDG2.x, BossSpawnDG2.y,
+                                    8000, 8000,
+                                    100, 0
+                                );
+                                list.Add(madGodBoss);
+                                _bossLastCombatMs["dg2"] = now;
+                            }
+
+                        }
+                        else
+                        {
+                            var b2 = list[idxDG2];
+                            if (b2.life > 0 && now - _bossLastCombatMs["dg2"] >= (long)BossOutOfCombat.TotalMilliseconds && b2.life < b2.maxlife)
+                            {
+                                var nl = Math.Min(b2.maxlife, b2.life + BossRegenPerTick);
+                                list[idxDG2] = b2 with { life = nl };
+                            }
+                        }
                     }
-                }
+                    break;
+                default:
+                    return list.ToArray();
             }
+            // ---------- DG1 ----------
+
 
             // ---------- DG2 ----------
-            {
-                var idxDG2 = list.FindIndex(m => m.tipo == 100);
-                if (idxDG2 == -1)
-                {
-                    if (now >= _bossNextRespawnAtMs["dg2"])
-                    {
-                        var madGodBoss = new MobData(
-                            Guid.NewGuid().ToString(),
-                            BossSpawnDG2.x, BossSpawnDG2.y,
-                            8000, 8000,
-                            100, 0
-                        );
-                        list.Add(madGodBoss);
-                        _bossLastCombatMs["dg2"] = now;
-                    }
 
-                }
-                else
-                {
-                    var b2 = list[idxDG2];
-                    if (b2.life > 0 && now - _bossLastCombatMs["dg2"] >= (long)BossOutOfCombat.TotalMilliseconds && b2.life < b2.maxlife)
-                    {
-                        var nl = Math.Min(b2.maxlife, b2.life + BossRegenPerTick);
-                        list[idxDG2] = b2 with { life = nl };
-                    }
-                }
-            }
 
             return list.ToArray();
         }
