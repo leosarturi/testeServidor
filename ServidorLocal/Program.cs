@@ -44,16 +44,22 @@ namespace ServidorLocal
         // Boss (por mapa)
         private static readonly Dictionary<string, long> _bossNextRespawnAtMs = new(StringComparer.OrdinalIgnoreCase)
         {
-            ["dg1"] = 0
+            ["dg1"] = 0,
+            ["dg2"] = 0
         };
 
         private static readonly Dictionary<string, long> _bossLastCombatMs = new(StringComparer.OrdinalIgnoreCase)
         {
-            ["dg1"] = 0
+            ["dg1"] = 0,
+            ["dg2"] = 0
         };
 
         private const int BossTipo = 99;
         private static readonly (int x, int y) BossSpawnDG1 = (10, 10);   // ajuste se quiser
+        private static readonly (int x, int y) BossSpawnDG2 = (0, 0);
+
+
+
         private const int BossMaxLife = 1500;
         private const int BossRegenPerTick = 30;         // ~30 a cada 200ms => 150/s
         private static readonly TimeSpan BossOutOfCombat = TimeSpan.FromSeconds(10);
@@ -583,12 +589,21 @@ namespace ServidorLocal
                             {
                                 _bossLastCombatMs["dg1"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                             }
+                            else if (mobs[idx].tipo == 100) // DG2
+                            {
+                                _bossLastCombatMs["dg2"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                            }
                             if (died)
                             {
 
                                 if (mob.tipo == BossTipo)
                                 {
                                     _bossNextRespawnAtMs["dg1"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + (long)BossRespawnDelay.TotalMilliseconds;
+                                }
+                                else if (mob.tipo == 100) // DG2
+                                {
+                                    _bossNextRespawnAtMs["dg2"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                                                                  + (long)BossRespawnDelay.TotalMilliseconds;
                                 }
                                 removes.Add(mob.idmob);
                                 mobs.RemoveAt(idx);
@@ -976,7 +991,7 @@ namespace ServidorLocal
 
                     // calcule os mobs novos por mapa (boss em dg1, spawner normal nos demais)
                     MobData[] newMobs;
-                    if (string.Equals(map, "dg1", StringComparison.OrdinalIgnoreCase))
+                    if (map.Equals("dg1", StringComparison.OrdinalIgnoreCase) || map.Equals("dg2", StringComparison.OrdinalIgnoreCase))
                     {
                         newMobs = TickBossMap(oldArea.Mobs, stop);
                         newMobs = UpdateMobsByAreas(newMobs, cfg, stop, true);
@@ -1008,8 +1023,23 @@ namespace ServidorLocal
                         updates,
                         removes
                     };
+
+
                     var json = System.Text.Json.JsonSerializer.Serialize(deltaPayload, _json);
                     await BroadcastAllAsync(json, map, stop);
+
+                    // ---------- DEBUG: Delta de mobs ----------
+                    // ---------- DEBUG: Delta de mobs ----------
+                    if (adds.Count > 0)
+                    {
+                        Console.WriteLine($"[DEBUG] Enviando delta para mapa={map} com {adds.Count} mobs novos");
+                        foreach (var mob in adds)
+                        {
+                            Console.WriteLine($"[DEBUG] -> Mob Tipo={mob.tipo}, ID={mob.idmob}, Pos=({mob.posx},{mob.posy})");
+                        }
+                    }
+
+
                 }
             }
         }
@@ -1020,40 +1050,61 @@ namespace ServidorLocal
             var list = current.ToList();
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-            // existe Boss vivo?
-            var idx = list.FindIndex(m => m.tipo == BossTipo);
-            if (idx == -1)
+            // ---------- DG1 ----------
             {
-                // não existe: tenta respawn se já passou o tempo
-                if (now >= _bossNextRespawnAtMs["dg1"])
+                var idxDG1 = list.FindIndex(m => m.tipo == BossTipo);
+                if (idxDG1 == -1)
                 {
-                    var boss = new MobData(
-                        Guid.NewGuid().ToString(),
-                        BossSpawnDG1.x, BossSpawnDG1.y,
-                        BossMaxLife, BossMaxLife,
-                        BossTipo, 0
-                    );
-                    list.Add(boss);
-
-                    // define "last combat" antigo para permitir regen se ficar parado
-                    _bossLastCombatMs["dg1"] = now;
+                    if (now >= _bossNextRespawnAtMs["dg1"])
+                    {
+                        var boss = new MobData(
+                            Guid.NewGuid().ToString(),
+                            BossSpawnDG1.x, BossSpawnDG1.y,
+                            BossMaxLife, BossMaxLife,
+                            BossTipo, 0
+                        );
+                        list.Add(boss);
+                        _bossLastCombatMs["dg1"] = now;
+                    }
                 }
-                return list.ToArray();
-            }
-
-            // existe: regen se ficar 10s sem combate
-            var b = list[idx];
-            if (b.life > 0)
-            {
-                if (now - _bossLastCombatMs["dg1"] >= (long)BossOutOfCombat.TotalMilliseconds && b.life < b.maxlife)
+                else
                 {
-                    var nl = System.Math.Min(b.maxlife, b.life + BossRegenPerTick);
-                    list[idx] = b with { life = nl };
+                    var b = list[idxDG1];
+                    if (b.life > 0 && now - _bossLastCombatMs["dg1"] >= (long)BossOutOfCombat.TotalMilliseconds && b.life < b.maxlife)
+                    {
+                        var nl = Math.Min(b.maxlife, b.life + BossRegenPerTick);
+                        list[idxDG1] = b with { life = nl };
+                    }
                 }
             }
-            else
+
+            // ---------- DG2 ----------
             {
-                // vida <= 0 será removido pelo handler de mob_hit
+                var idxDG2 = list.FindIndex(m => m.tipo == 100);
+                if (idxDG2 == -1)
+                {
+                    if (now >= _bossNextRespawnAtMs["dg2"])
+                    {
+                        var madGodBoss = new MobData(
+                            Guid.NewGuid().ToString(),
+                            BossSpawnDG2.x, BossSpawnDG2.y,
+                            8000, 8000,
+                            100, 0
+                        );
+                        list.Add(madGodBoss);
+                        _bossLastCombatMs["dg2"] = now;
+                    }
+
+                }
+                else
+                {
+                    var b2 = list[idxDG2];
+                    if (b2.life > 0 && now - _bossLastCombatMs["dg2"] >= (long)BossOutOfCombat.TotalMilliseconds && b2.life < b2.maxlife)
+                    {
+                        var nl = Math.Min(b2.maxlife, b2.life + BossRegenPerTick);
+                        list[idxDG2] = b2 with { life = nl };
+                    }
+                }
             }
 
             return list.ToArray();
