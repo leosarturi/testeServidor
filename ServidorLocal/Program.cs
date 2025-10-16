@@ -494,7 +494,11 @@ namespace ServidorLocal
                 speed = 0.3f;
                 aggroRange = 500f;
                 attackRange = 50f;
-                attackCooldownMs = 1000;
+                if (mob.tipo == 100)
+                {
+                    attackCooldownMs = 3000;
+                }
+                else { attackCooldownMs = 1000; }
             }
 
             float dx = 0f, dy = 0f;
