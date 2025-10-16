@@ -137,18 +137,21 @@ namespace ServidorLocal
         private static readonly Dictionary<string, long> _bossNextRespawnAtMs = new(StringComparer.OrdinalIgnoreCase)
         {
             ["dg1"] = 0,
-            ["dg2"] = 0
+            ["dg2"] = 0,
+            ["dg3"] = 0
         };
 
         private static readonly Dictionary<string, long> _bossLastCombatMs = new(StringComparer.OrdinalIgnoreCase)
         {
             ["dg1"] = 0,
-            ["dg2"] = 0
+            ["dg2"] = 0,
+            ["dg3"] = 0
         };
 
         private const int BossTipo = 99;
         private static readonly (int x, int y) BossSpawnDG1 = (10, 10);   // ajuste se quiser
         private static readonly (int x, int y) BossSpawnDG2 = (0, 0);
+        private static readonly (int x, int y) BossSpawnDG3 = (0, 0);
 
 
 
@@ -328,19 +331,17 @@ namespace ServidorLocal
             if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(map)) return;
 
             _playersMap.TryGetValue(clientId, out var oldMap);
-            Console.WriteLine($"Cliente {clientId} trocou de '{oldMap}' para '{map}'");
 
             if (_players.TryGetValue(clientId, out var player))
             {
                 _players[clientId] = player with { mapa = map };
             }
             _playersMap[clientId] = map;
+            Console.WriteLine($"Cliente {clientId} trocou de '{oldMap}' para '{_playersMap[clientId]}'");
 
-            // Atualiza listas de players por mapa
-            if (!string.IsNullOrEmpty(oldMap))
-                await BroadcastPlayersOfMapAsync(oldMap, ct);
 
-            await BroadcastPlayersOfMapAsync(map, ct);
+
+            await BroadcastPlayersOfMapAsync(clientId, ct);
 
             // Envia snapshot de mobs desse mapa somente para o cliente que trocou
             if (_clients.TryGetValue(clientId, out var ws) && ws.State == WebSocketState.Open)
@@ -362,7 +363,7 @@ namespace ServidorLocal
             };
             var json = JsonSerializer.Serialize(payload);
 
-            Console.WriteLine($"[Mob] SEND SNAPSHOT map={area.Map} v={area.Version} count={area.Mobs.Length}");
+            //   Console.WriteLine($"[Mob] SEND SNAPSHOT map={area.Map} v={area.Version} count={area.Mobs.Length}");
 
             await socket.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, ct);
         }
@@ -498,6 +499,10 @@ namespace ServidorLocal
                 {
                     attackCooldownMs = 3000;
                 }
+                else if (mob.tipo == 101)
+                {
+                    attackCooldownMs = 5000;
+                }
                 else { attackCooldownMs = 1000; }
             }
 
@@ -550,12 +555,15 @@ namespace ServidorLocal
                             var json = JsonSerializer.Serialize(data);
 
                             _ = BroadcastAllAsync(json, target.Value.mapa, ct);
-                            Console.WriteLine($"[MOB] {mob.idmob} atacou");
+                            // Console.WriteLine($"[MOB] {mob.idmob} atacou");
                         }
                     }
                 }
 
-
+                if (mob.tipo == 101)
+                {
+                    return mob;
+                }
                 // Atualiza posição
                 float newX = mob.posx + dx;
                 float newY = mob.posy + dy;
@@ -1049,13 +1057,12 @@ namespace ServidorLocal
             }
         }
 
-        private static async Task BroadcastPlayersOfMapAsync(string map, CancellationToken ct)
+        private static async Task BroadcastPlayersOfMapAsync(string clientId, CancellationToken ct)
         {
             try
             {
-                var playersOfMap = _players.Values
-                    .Where(p => _playersMap.TryGetValue(p.idplayer, out var m) && m == map)
-                    .ToList();
+                var playersOfMap = _players[clientId];
+
 
                 var message = JsonSerializer.Serialize(new
                 {
@@ -1067,17 +1074,15 @@ namespace ServidorLocal
 
                 foreach (var kvp in _clients)
                 {
-                    if (kvp.Value.State != WebSocketState.Open) continue;
-                    if (_playersMap.TryGetValue(kvp.Key, out var cm) && cm == map)
-                    {
-                        try { await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct); }
-                        catch { /* ignore */ }
-                    }
+
+                    try { await kvp.Value.SendAsync(bytes, WebSocketMessageType.Text, true, ct); }
+                    catch { /* ignore */ }
+
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Erro no broadcast de players do mapa '{map}': {ex.Message}");
+                Console.WriteLine($"Erro no broadcast de players do mapa '{_playersMap[clientId]}': {ex.Message}");
             }
         }
         private static async Task BroadcastPlayerConnectedAsync(PlayerData clientId, CancellationToken ct)
@@ -1180,7 +1185,13 @@ namespace ServidorLocal
 
                     // calcule os mobs novos por mapa (boss em dg1, spawner normal nos demais)
                     MobData[] newMobs;
-                    if (map.Equals("dg2", StringComparison.OrdinalIgnoreCase))
+                    if (map.Equals("dg3", StringComparison.OrdinalIgnoreCase))
+                    {
+                        newMobs = TickBossMap(oldArea.Mobs, stop, "dg3");
+                        newMobs = UpdateMobsByAreas(newMobs, cfg, stop, true);
+                    }
+                    else
+                  if (map.Equals("dg2", StringComparison.OrdinalIgnoreCase))
                     {
                         newMobs = TickBossMap(oldArea.Mobs, stop, "dg2");
                         newMobs = UpdateMobsByAreas(newMobs, cfg, stop, true);
@@ -1297,6 +1308,35 @@ namespace ServidorLocal
                             {
                                 var nl = Math.Min(b2.maxlife, b2.life + BossRegenPerTick);
                                 list[idxDG2] = b2 with { life = nl };
+                            }
+                        }
+                    }
+                    break;
+                case "dg3":
+                    {
+                        var idxDG3 = list.FindIndex(m => m.tipo == 101);
+                        if (idxDG3 == -1)
+                        {
+                            if (now >= _bossNextRespawnAtMs["dg3"])
+                            {
+                                var madGodBoss = new MobData(
+                                    Guid.NewGuid().ToString(),
+                                    BossSpawnDG2.x, BossSpawnDG2.y,
+                                    15000, 15000,
+                                    101, 0
+                                );
+                                list.Add(madGodBoss);
+                                _bossLastCombatMs["dg3"] = now;
+                            }
+
+                        }
+                        else
+                        {
+                            var b2 = list[idxDG3];
+                            if (b2.life > 0 && now - _bossLastCombatMs["dg3"] >= (long)BossOutOfCombat.TotalMilliseconds && b2.life < b2.maxlife)
+                            {
+                                var nl = Math.Min(b2.maxlife, b2.life + BossRegenPerTick);
+                                list[idxDG3] = b2 with { life = nl };
                             }
                         }
                     }
