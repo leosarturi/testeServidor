@@ -1216,6 +1216,7 @@ namespace ServidorLocal
                         newMobs = TickBossMap(oldArea.Mobs, stop, "dg4");
                         newMobs = UpdateMobsByAreas(newMobs, cfg, stop, true);
                     }
+                    else
                     if (map.Equals("dg3", StringComparison.OrdinalIgnoreCase))
                     {
                         newMobs = TickBossMap(oldArea.Mobs, stop, "dg3");
