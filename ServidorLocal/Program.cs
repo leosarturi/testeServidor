@@ -869,6 +869,11 @@ namespace ServidorLocal
                         }
                         return;
                     }
+                case "quer_mamar":
+                    var mamar = new { type = "quer_mamar" };
+
+                    await BroadcastRawAsync(JsonSerializer.Serialize(mamar), null, ct);
+                    break;
 
                 default:
                     return;
