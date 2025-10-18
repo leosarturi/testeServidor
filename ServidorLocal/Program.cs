@@ -871,7 +871,7 @@ namespace ServidorLocal
                     }
                 case "quer_mamar":
                     var mamar = new { type = "quer_mamar" };
-
+                    Console.WriteLine("teste");
                     await BroadcastRawAsync(JsonSerializer.Serialize(mamar), null, ct);
                     break;
 
