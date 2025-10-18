@@ -138,20 +138,23 @@ namespace ServidorLocal
         {
             ["dg1"] = 0,
             ["dg2"] = 0,
-            ["dg3"] = 0
+            ["dg3"] = 0,
+            ["dg4"] = 0
         };
 
         private static readonly Dictionary<string, long> _bossLastCombatMs = new(StringComparer.OrdinalIgnoreCase)
         {
             ["dg1"] = 0,
             ["dg2"] = 0,
-            ["dg3"] = 0
+            ["dg3"] = 0,
+            ["dg4"] = 0
         };
 
         private const int BossTipo = 99;
         private static readonly (int x, int y) BossSpawnDG1 = (10, 10);   // ajuste se quiser
         private static readonly (int x, int y) BossSpawnDG2 = (0, 0);
         private static readonly (int x, int y) BossSpawnDG3 = (0, 0);
+        private static readonly (int x, int y) BossSpawnDG4 = (0, 0);
 
 
 
@@ -503,7 +506,11 @@ namespace ServidorLocal
                 {
                     attackCooldownMs = 3500;
                 }
-                else { attackCooldownMs = 1000; }
+                else if (mob.tipo == 102)
+                {
+                    attackCooldownMs = 2000;
+                }
+                else { attackCooldownMs = 1500; }
             }
 
             float dx = 0f, dy = 0f;
@@ -711,6 +718,10 @@ namespace ServidorLocal
                             {
                                 _bossLastCombatMs["dg3"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                             }
+                            else if (mobs[idx].tipo == 102)
+                            {
+                                _bossLastCombatMs["dg4"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                            }
                             if (died)
                             {
 
@@ -726,6 +737,11 @@ namespace ServidorLocal
                                 else if (mob.tipo == 101) // DG2
                                 {
                                     _bossNextRespawnAtMs["dg3"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                                                                  + (long)BossRespawnDelay.TotalMilliseconds;
+                                }
+                                else if (mob.tipo == 102) // DG2
+                                {
+                                    _bossNextRespawnAtMs["dg4"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                                                                   + (long)BossRespawnDelay.TotalMilliseconds;
                                 }
                                 removes.Add(mob.idmob);
@@ -1195,6 +1211,11 @@ namespace ServidorLocal
 
                     // calcule os mobs novos por mapa (boss em dg1, spawner normal nos demais)
                     MobData[] newMobs;
+                    if (map.Equals("dg4", StringComparison.OrdinalIgnoreCase))
+                    {
+                        newMobs = TickBossMap(oldArea.Mobs, stop, "dg4");
+                        newMobs = UpdateMobsByAreas(newMobs, cfg, stop, true);
+                    }
                     if (map.Equals("dg3", StringComparison.OrdinalIgnoreCase))
                     {
                         newMobs = TickBossMap(oldArea.Mobs, stop, "dg3");
@@ -1347,6 +1368,35 @@ namespace ServidorLocal
                             {
                                 var nl = Math.Min(b2.maxlife, b2.life + BossRegenPerTick);
                                 list[idxDG3] = b2 with { life = nl };
+                            }
+                        }
+                    }
+                    break;
+                case "dg4":
+                    {
+                        var idxDG4 = list.FindIndex(m => m.tipo == 102);
+                        if (idxDG4 == -1)
+                        {
+                            if (now >= _bossNextRespawnAtMs["dg4"])
+                            {
+                                var madGodBoss = new MobData(
+                                    Guid.NewGuid().ToString(),
+                                    BossSpawnDG4.x, BossSpawnDG4.y,
+                                    30000, 30000,
+                                    102, 0
+                                );
+                                list.Add(madGodBoss);
+                                _bossLastCombatMs["dg4"] = now;
+                            }
+
+                        }
+                        else
+                        {
+                            var b2 = list[idxDG4];
+                            if (b2.life > 0 && now - _bossLastCombatMs["dg4"] >= (long)BossOutOfCombat.TotalMilliseconds && b2.life < b2.maxlife)
+                            {
+                                var nl = Math.Min(b2.maxlife, b2.life + BossRegenPerTick);
+                                list[idxDG4] = b2 with { life = nl };
                             }
                         }
                     }
