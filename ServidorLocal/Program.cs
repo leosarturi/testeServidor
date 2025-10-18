@@ -1321,7 +1321,7 @@ namespace ServidorLocal
                             {
                                 var madGodBoss = new MobData(
                                     Guid.NewGuid().ToString(),
-                                    BossSpawnDG2.x, BossSpawnDG2.y,
+                                    BossSpawnDG3.x, BossSpawnDG3.y,
                                     15000, 15000,
                                     101, 0
                                 );
