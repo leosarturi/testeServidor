@@ -501,7 +501,7 @@ namespace ServidorLocal
                 }
                 else if (mob.tipo == 101)
                 {
-                    attackCooldownMs = 5000;
+                    attackCooldownMs = 3500;
                 }
                 else { attackCooldownMs = 1000; }
             }
@@ -551,7 +551,7 @@ namespace ServidorLocal
                         if (now - last >= attackCooldownMs)
                         {
                             _mobLastAttackAt[mob.idmob] = now; // inicia cooldown
-                            var data = new { type = "mob_attack", data = mob.idmob };
+                            var data = new { type = "mob_attack", data = new { mobid = mob.idmob, timestamp = now } };
                             var json = JsonSerializer.Serialize(data);
 
                             _ = BroadcastAllAsync(json, target.Value.mapa, ct);
