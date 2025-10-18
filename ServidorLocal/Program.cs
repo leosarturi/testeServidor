@@ -504,7 +504,7 @@ namespace ServidorLocal
                 }
                 else if (mob.tipo == 101)
                 {
-                    attackCooldownMs = 3500;
+                    attackCooldownMs = 2500;
                 }
                 else if (mob.tipo == 102)
                 {
@@ -1354,7 +1354,7 @@ namespace ServidorLocal
                                 var madGodBoss = new MobData(
                                     Guid.NewGuid().ToString(),
                                     BossSpawnDG3.x, BossSpawnDG3.y,
-                                    15000, 15000,
+                                    25000, 25000,
                                     101, 0
                                 );
                                 list.Add(madGodBoss);
