@@ -551,7 +551,8 @@ namespace ServidorLocal
                         if (now - last >= attackCooldownMs)
                         {
                             _mobLastAttackAt[mob.idmob] = now; // inicia cooldown
-                            var data = new { type = "mob_attack", data = new { mobid = mob.idmob, timestamp = now } };
+                            int attack = Random.Shared.Next(0, 3);
+                            var data = new { type = "mob_attack", data = new { mobid = mob.idmob, timestamp = attack } };
                             var json = JsonSerializer.Serialize(data);
 
                             _ = BroadcastAllAsync(json, target.Value.mapa, ct);
@@ -706,6 +707,10 @@ namespace ServidorLocal
                             {
                                 _bossLastCombatMs["dg2"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                             }
+                            else if (mobs[idx].tipo == 101)
+                            {
+                                _bossLastCombatMs["dg3"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                            }
                             if (died)
                             {
 
@@ -716,6 +721,11 @@ namespace ServidorLocal
                                 else if (mob.tipo == 100) // DG2
                                 {
                                     _bossNextRespawnAtMs["dg2"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                                                                  + (long)BossRespawnDelay.TotalMilliseconds;
+                                }
+                                else if (mob.tipo == 101) // DG2
+                                {
+                                    _bossNextRespawnAtMs["dg3"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                                                                   + (long)BossRespawnDelay.TotalMilliseconds;
                                 }
                                 removes.Add(mob.idmob);
