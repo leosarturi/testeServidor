@@ -167,7 +167,7 @@ namespace ServidorLocal
         private sealed class MobHitInput { public string idmob { get; set; } = ""; public float dmg { get; set; } }
 
         private sealed class PartySetEnvelope { public required string type; public required PartySetInput data { get; set; } }
-        private sealed class PartySetInput { public string? partyId { get; set; } }
+        private sealed class PartySetInput { public string? partyId { get; set; } public required string[] members { get; set; } }
 
         // Party state
         // playerId -> partyId (ou null)
@@ -671,12 +671,13 @@ namespace ServidorLocal
 
                 case "party_set":
                     {
+
                         try
                         {
-                            var env = JsonSerializer.Deserialize<SocketEnvelope<PartySetEnvelope>>(msg);
+                            var env = JsonSerializer.Deserialize<SocketEnvelope<PartySetInput>>(msg);
                             if (env.data != null)
                                 await SetPartyAsync(clientId,
-                                    string.IsNullOrWhiteSpace(env.data.data.partyId) ? null : env.data.data.partyId!.Trim(),
+                                    string.IsNullOrWhiteSpace(env.data.partyId) ? null : env.data.partyId!.Trim(),
                                     ct);
                         }
                         catch { /* ignore */ }
@@ -879,10 +880,12 @@ namespace ServidorLocal
         private static async Task SetPartyAsync(string playerId, string? partyIdOrNull, CancellationToken ct)
         {
             // 1) remover da party anterior (se houver)
+            Console.WriteLine($"SetPartyAsync: playerId={playerId} partyIdOrNull={partyIdOrNull}");
             if (_partyOfPlayer.TryGetValue(playerId, out var prev) && !string.IsNullOrWhiteSpace(prev))
             {
                 if (_partyMembers.TryGetValue(prev!, out var oldSet))
                 {
+                    Console.WriteLine($"Removendo {playerId} da party {prev}");
                     lock (oldSet) oldSet.Remove(playerId);
                     // avisa o cara que saiu
                     var leftPayload = new { type = "party_info", data = new { party = "", members = Array.Empty<string>() } };
@@ -898,10 +901,13 @@ namespace ServidorLocal
             // 2) se foi só sair, encerra
             if (string.IsNullOrWhiteSpace(partyIdOrNull))
             {
+                Console.WriteLine($"Jogador {playerId} saiu da party");
                 _partyOfPlayer[playerId] = null;
                 return;
             }
-            if (_partyMembers[partyIdOrNull].Count > 5) return;
+
+            if (_partyMembers.TryGetValue(playerId, out var party) && party.Count > 5) return;
+            Console.WriteLine($"Adicionando {playerId} na party {partyIdOrNull}");
             // 3) adicionar na nova party e avisar TODO MUNDO da party
             _partyOfPlayer[playerId] = partyIdOrNull;
             var set = _partyMembers.GetOrAdd(partyIdOrNull!, _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
@@ -933,6 +939,12 @@ namespace ServidorLocal
             while (Random.Shared.NextInt64(100) < 3)
             {
                 item++;
+            }
+
+            if (m.tipo >= BossTipo)
+            {
+                currency += 10;
+                item += 2;
             }
 
             return new MobLoot(currency, item);
@@ -1189,7 +1201,7 @@ namespace ServidorLocal
 
         // -------------------- Loop do jogo (mobs autoritativos) --------------------
         private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(200);
-        private const int MaxMobsPerArea = 15;
+        private const int MaxMobsPerArea = 30;
         private const int MaxPerTickPerArea = 5;
 
         private static async Task RunGameLoopAsync(CancellationToken stop)
