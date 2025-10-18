@@ -900,7 +900,7 @@ namespace ServidorLocal
         private static int ComputeMobXp(in MobData m)
         {
             // regra simples: tipo e área influenciam
-            var baseXp = 10 * (m.tipo + 1) + 5 * (m.area + 1);
+            var baseXp = 10 * (m.area + 1);
             return Math.Max(5, baseXp);
         }
 
