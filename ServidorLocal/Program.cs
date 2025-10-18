@@ -166,7 +166,7 @@ namespace ServidorLocal
         private readonly record struct MobDamageInput(string idmob, float damage);
         private sealed class MobHitInput { public string idmob { get; set; } = ""; public float dmg { get; set; } }
 
-
+        private sealed class PartySetEnvelope { public required string type; public required PartySetInput data { get; set; } }
         private sealed class PartySetInput { public string? partyId { get; set; } }
 
         // Party state
@@ -673,10 +673,10 @@ namespace ServidorLocal
                     {
                         try
                         {
-                            var env = JsonSerializer.Deserialize<SocketEnvelope<PartySetInput>>(msg);
+                            var env = JsonSerializer.Deserialize<SocketEnvelope<PartySetEnvelope>>(msg);
                             if (env.data != null)
                                 await SetPartyAsync(clientId,
-                                    string.IsNullOrWhiteSpace(env.data.partyId) ? null : env.data.partyId!.Trim(),
+                                    string.IsNullOrWhiteSpace(env.data.data.partyId) ? null : env.data.data.partyId!.Trim(),
                                     ct);
                         }
                         catch { /* ignore */ }
