@@ -489,7 +489,7 @@ namespace ServidorLocal
         private static MobData MoveMobAI(MobData mob, List<PlayerData> playersInArea, CancellationToken ct)
         {
 
-            float speed = 0.5f;        // velocidade do mob
+            float speed = 0.5f * Math.Max(1, mob.area);        // velocidade do mob
             float aggroRange = 10f;    // distância máxima para perseguir o player
             float attackRange = 1.6f;  // distância para ataque     // dano base
             int attackCooldownMs = 2000;
