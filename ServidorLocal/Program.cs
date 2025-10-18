@@ -122,10 +122,10 @@ namespace ServidorLocal
         }
 
         // Config de spawn por "área" (quadrantes). Todos no mesmo mapa "mapa".
-        private static SpawnData area1 = new(90, 90, 0, Array.Empty<MobData>(), "mapa");
-        private static SpawnData area2 = new(-90, 90, 0, Array.Empty<MobData>(), "mapa");
-        private static SpawnData area3 = new(90, -90, 0, Array.Empty<MobData>(), "mapa");
-        private static SpawnData area4 = new(-90, -90, 0, Array.Empty<MobData>(), "mapa");
+        private static SpawnData area1 = new(80, 80, 0, Array.Empty<MobData>(), "mapa");
+        private static SpawnData area2 = new(-80, 80, 0, Array.Empty<MobData>(), "mapa");
+        private static SpawnData area3 = new(80, -80, 0, Array.Empty<MobData>(), "mapa");
+        private static SpawnData area4 = new(-80, -80, 0, Array.Empty<MobData>(), "mapa");
 
         private static SpawnData dg1Area = new(30f, 30f, 0, Array.Empty<MobData>(), "dg1");
         private static SpawnData dg2Area = new(30f, 30f, 0, Array.Empty<MobData>(), "dg2");
