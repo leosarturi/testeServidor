@@ -131,6 +131,7 @@ namespace ServidorLocal
         private static SpawnData dg2Area = new(30f, 30f, 0, Array.Empty<MobData>(), "dg2");
         private static SpawnData dg3Area = new(30f, 30f, 0, Array.Empty<MobData>(), "dg3");
         private static SpawnData dg4Area = new(30f, 30f, 0, Array.Empty<MobData>(), "dg4");
+        private static SpawnData dg5Area = new(30f, 30f, 0, Array.Empty<MobData>(), "dg5");
         private static SpawnData[] _spawnConfigs = new[] { area1, area2, area3, area4 };
 
         // Boss (por mapa)
@@ -139,7 +140,8 @@ namespace ServidorLocal
             ["dg1"] = 0,
             ["dg2"] = 0,
             ["dg3"] = 0,
-            ["dg4"] = 0
+            ["dg4"] = 0,
+            ["dg5"] = 0
         };
 
         private static readonly Dictionary<string, long> _bossLastCombatMs = new(StringComparer.OrdinalIgnoreCase)
@@ -147,7 +149,8 @@ namespace ServidorLocal
             ["dg1"] = 0,
             ["dg2"] = 0,
             ["dg3"] = 0,
-            ["dg4"] = 0
+            ["dg4"] = 0,
+            ["dg5"] = 0
         };
 
         private const int BossTipo = 99;
@@ -155,6 +158,7 @@ namespace ServidorLocal
         private static readonly (int x, int y) BossSpawnDG2 = (0, 0);
         private static readonly (int x, int y) BossSpawnDG3 = (0, 0);
         private static readonly (int x, int y) BossSpawnDG4 = (0, 0);
+        private static readonly (int x, int y) BossSpawnDG5 = (0, 0);
 
 
 
@@ -186,7 +190,8 @@ namespace ServidorLocal
                 ["dg1"] = new AreaState("dg1", 0, Array.Empty<MobData>()),
                 ["dg2"] = new AreaState("dg2", 0, Array.Empty<MobData>()),
                 ["dg3"] = new AreaState("dg3", 0, Array.Empty<MobData>()),
-                ["dg4"] = new AreaState("dg4", 0, Array.Empty<MobData>())
+                ["dg4"] = new AreaState("dg4", 0, Array.Empty<MobData>()),
+                ["dg5"] = new AreaState("dg5", 0, Array.Empty<MobData>())
             };
 
         private static readonly Dictionary<string, SpawnData[]> _spawnByMap = new()
@@ -196,6 +201,7 @@ namespace ServidorLocal
             ["dg2"] = new[] { dg2Area },
             ["dg3"] = new[] { dg3Area },
             ["dg4"] = new[] { dg4Area },
+            ["dg5"] = new[] { dg5Area },
 
             // "cidade" propositalmente sem entry para manter SEM mobs
         };
@@ -510,7 +516,11 @@ namespace ServidorLocal
                 {
                     attackCooldownMs = 2000;
                 }
-                else { attackCooldownMs = 2000; }
+                else if (mob.tipo == 103)
+                {
+                    attackCooldownMs = 2000;
+                }
+                else { attackCooldownMs = 1500; }
             }
 
             float dx = 0f, dy = 0f;
@@ -757,6 +767,10 @@ namespace ServidorLocal
                             {
                                 _bossLastCombatMs["dg4"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                             }
+                            else if (mobs[idx].tipo == 103)
+                            {
+                                _bossLastCombatMs["dg5"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                            }
                             if (died)
                             {
 
@@ -777,6 +791,11 @@ namespace ServidorLocal
                                 else if (mob.tipo == 102) // DG2
                                 {
                                     _bossNextRespawnAtMs["dg4"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                                                                  + (long)BossRespawnDelay.TotalMilliseconds;
+                                }
+                                else if (mob.tipo == 103) // DG2
+                                {
+                                    _bossNextRespawnAtMs["dg5"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                                                                   + (long)BossRespawnDelay.TotalMilliseconds;
                                 }
                                 removes.Add(mob.idmob);
@@ -1262,19 +1281,25 @@ namespace ServidorLocal
 
                     // calcule os mobs novos por mapa (boss em dg1, spawner normal nos demais)
                     MobData[] newMobs;
-                    if (map.Equals("dg4", StringComparison.OrdinalIgnoreCase))
+                    if (map.Equals("dg5", StringComparison.OrdinalIgnoreCase))
+                    {
+                        newMobs = TickBossMap(oldArea.Mobs, stop, "dg5");
+                        newMobs = UpdateMobsByAreas(newMobs, cfg, stop, true);
+                    }
+                    else
+                   if (map.Equals("dg4", StringComparison.OrdinalIgnoreCase))
                     {
                         newMobs = TickBossMap(oldArea.Mobs, stop, "dg4");
                         newMobs = UpdateMobsByAreas(newMobs, cfg, stop, true);
                     }
                     else
-                    if (map.Equals("dg3", StringComparison.OrdinalIgnoreCase))
+                   if (map.Equals("dg3", StringComparison.OrdinalIgnoreCase))
                     {
                         newMobs = TickBossMap(oldArea.Mobs, stop, "dg3");
                         newMobs = UpdateMobsByAreas(newMobs, cfg, stop, true);
                     }
                     else
-                  if (map.Equals("dg2", StringComparison.OrdinalIgnoreCase))
+                 if (map.Equals("dg2", StringComparison.OrdinalIgnoreCase))
                     {
                         newMobs = TickBossMap(oldArea.Mobs, stop, "dg2");
                         newMobs = UpdateMobsByAreas(newMobs, cfg, stop, true);
@@ -1449,6 +1474,35 @@ namespace ServidorLocal
                             {
                                 var nl = Math.Min(b2.maxlife, b2.life + BossRegenPerTick);
                                 list[idxDG4] = b2 with { life = nl };
+                            }
+                        }
+                    }
+                    break;
+                case "dg5":
+                    {
+                        var idxDG5 = list.FindIndex(m => m.tipo == 103);
+                        if (idxDG5 == -1)
+                        {
+                            if (now >= _bossNextRespawnAtMs["dg5"])
+                            {
+                                var madGodBoss = new MobData(
+                                    Guid.NewGuid().ToString(),
+                                    BossSpawnDG5.x, BossSpawnDG5.y,
+                                    100000, 100000,
+                                    103, 0
+                                );
+                                list.Add(madGodBoss);
+                                _bossLastCombatMs["dg5"] = now;
+                            }
+
+                        }
+                        else
+                        {
+                            var b2 = list[idxDG5];
+                            if (b2.life > 0 && now - _bossLastCombatMs["dg5"] >= (long)BossOutOfCombat.TotalMilliseconds && b2.life < b2.maxlife)
+                            {
+                                var nl = Math.Min(b2.maxlife, b2.life + BossRegenPerTick);
+                                list[idxDG5] = b2 with { life = nl };
                             }
                         }
                     }
