@@ -522,7 +522,7 @@ namespace ServidorLocal
                 }
                 else if (mob.tipo == 103)
                 {
-                    attackCooldownMs = 2000;
+                    attackCooldownMs = 3000;
                 }
                 else { attackCooldownMs = 1500; }
             }
@@ -597,7 +597,7 @@ namespace ServidorLocal
                         {
                             _mobLastAttackAt[mob.idmob] = now; // inicia cooldown
                             int attack;
-                            if (mob.tipo == 101)
+                            if (mob.tipo == 101 || mob.tipo == 103)
                             {
                                 double r = Random.Shared.NextDouble(); // 0.0 .. 1.0
                                 if (r < 0.40)           // 45%
