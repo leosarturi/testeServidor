@@ -524,10 +524,6 @@ namespace ServidorLocal
                 {
                     attackCooldownMs = 2000;
                 }
-                if (isAttackAggro)
-                {
-                    aggroRange = 999f;
-                }
                 else { attackCooldownMs = 1500; }
             }
 
