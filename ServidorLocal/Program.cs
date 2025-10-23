@@ -504,13 +504,13 @@ namespace ServidorLocal
                 }
                 else if (mob.tipo == 101)
                 {
-                    attackCooldownMs = 2500;
+                    attackCooldownMs = 3000;
                 }
                 else if (mob.tipo == 102)
                 {
                     attackCooldownMs = 2000;
                 }
-                else { attackCooldownMs = 1500; }
+                else { attackCooldownMs = 2000; }
             }
 
             float dx = 0f, dy = 0f;
@@ -558,7 +558,22 @@ namespace ServidorLocal
                         if (now - last >= attackCooldownMs)
                         {
                             _mobLastAttackAt[mob.idmob] = now; // inicia cooldown
-                            int attack = Random.Shared.Next(0, 3);
+                            int attack;
+                            if (mob.tipo == 101)
+                            {
+                                double r = Random.Shared.NextDouble(); // 0.0 .. 1.0
+                                if (r < 0.40)           // 45%
+                                    attack = 0;
+                                else if (r < 0.80)      // próximo 45%
+                                    attack = 1;
+                                else                   // restante 10%
+                                    attack = 2;
+
+                            }
+                            else
+                            {
+                                attack = Random.Shared.Next(0, 3);
+                            }
                             var data = new { type = "mob_attack", data = new { mobid = mob.idmob, timestamp = attack } };
                             var json = JsonSerializer.Serialize(data);
 
@@ -706,6 +721,25 @@ namespace ServidorLocal
 
                             List<MobData> updates = new();
                             List<string> removes = new();
+                            if (mobs[idx].tipo < 20)
+                            {
+                                var aggro = MoveMobAI(mobs[idx], new PlayerData[] { _players[clientId] }.ToList(), ct);
+                                if (aggro.posx != mobs[idx].posx || aggro.posy != mobs[idx].posy)
+                                {
+                                    // broadcast apenas para quem está no mapa
+                                    var aggroPayload = new
+                                    {
+                                        type = "mob_delta",
+                                        map = "mapa",
+                                        v = _areas["cidade"].Version + 1,
+                                        adds = new List<MobData>(),
+                                        updates = aggro,
+                                        removes = new List<MobData>()
+                                    };
+                                    var json = System.Text.Json.JsonSerializer.Serialize(aggroPayload);
+                                    await BroadcastAllAsync(json, map, ct);
+                                }
+                            }
 
                             if (mobs[idx].tipo == BossTipo)
                             {
@@ -927,7 +961,7 @@ namespace ServidorLocal
         private static int ComputeMobXp(in MobData m)
         {
             // regra simples: tipo e área influenciam
-            var baseXp = 10 * (m.area + 1);
+            var baseXp = (10 * (m.area + 1)) * 5;
             return Math.Max(5, baseXp);
         }
 
