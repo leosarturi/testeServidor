@@ -514,7 +514,7 @@ namespace ServidorLocal
                 }
                 else if (mob.tipo == 101)
                 {
-                    attackCooldownMs = 4000;
+                    attackCooldownMs = 3500;
                 }
                 else if (mob.tipo == 102)
                 {
