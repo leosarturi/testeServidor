@@ -160,7 +160,7 @@ namespace ServidorLocal
         private static readonly (int x, int y) BossSpawnDG2 = (0, 0);
         private static readonly (int x, int y) BossSpawnDG3 = (0, 0);
         private static readonly (int x, int y) BossSpawnDG4 = (0, 0);
-        private static readonly (int x, int y) BossSpawnDG5 = (0, 0);
+        private static readonly (int x, int y) BossSpawnDG5 = (0, -30);
 
 
 
@@ -984,7 +984,7 @@ namespace ServidorLocal
         private static int ComputeMobXp(in MobData m)
         {
             // regra simples: tipo e área influenciam
-            var baseXp = (10 * (m.area + 1)) * 5;
+            var baseXp = (10 * (m.tipo + 1)) * 5;
             return Math.Max(5, baseXp);
         }
 
