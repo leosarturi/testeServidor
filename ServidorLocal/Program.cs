@@ -37,6 +37,8 @@ namespace ServidorLocal
         private sealed class SellInput { public required string ownerId { get; set; } public int price { get; set; } public required JsonElement item { get; set; } }
         private sealed class BuyInput { public required string buyerId { get; set; } public required int index { get; set; } }
 
+        private static readonly ConcurrentDictionary<string, string> _mobAggroTarget = new();
+
         private static void LoadAuctions()
         {
             try
@@ -493,10 +495,14 @@ namespace ServidorLocal
         private static MobData MoveMobAI(MobData mob, List<PlayerData> playersInArea, CancellationToken ct, bool isAttackAggro = false)
         {
 
+
+
             float speed = 0.5f * Math.Max(1, mob.area);        // velocidade do mob
             float aggroRange = 10f;    // distância máxima para perseguir o player
             float attackRange = 1.6f;  // distância para ataque     // dano base
             int attackCooldownMs = 2000;
+
+
             if (mob.tipo > 50)
             {
                 speed = 0.3f;
@@ -524,6 +530,26 @@ namespace ServidorLocal
                 }
                 else { attackCooldownMs = 1500; }
             }
+
+            if (mob.tipo < 20)
+            {
+                if (_mobAggroTarget.TryGetValue(mob.idmob, out var targetId) && _players.TryGetValue(targetId, out var targetPlayer))
+                {
+                    if (_playersMap.TryGetValue(targetId, out var targetMap) &&
+                        targetMap == "mapa")
+                    {
+                        // Só persegue o alvo atual
+                        playersInArea = new List<PlayerData> { targetPlayer };
+                        aggroRange = 999;
+                    }
+                    else
+                    {
+                        // Se o alvo saiu do mapa, limpa o aggro
+                        _mobAggroTarget.TryRemove(mob.idmob, out _);
+                    }
+                }
+            }
+
 
             float dx = 0f, dy = 0f;
 
@@ -727,31 +753,12 @@ namespace ServidorLocal
                             if (idx == -1) return;
 
                             var mob = mobs[idx];
+                            _mobAggroTarget[mob.idmob] = clientId;
                             var newLife = Math.Max(0, mob.life - env.data.dmg);
                             bool died = newLife <= 0;
 
                             List<MobData> updates = new();
                             List<string> removes = new();
-                            if (mobs[idx].tipo < 20)
-                            {
-                                var aggro = MoveMobAI(mobs[idx], new PlayerData[] { _players[clientId] }.ToList(), ct, isAttackAggro: true);
-                                if (aggro.posx != mobs[idx].posx || aggro.posy != mobs[idx].posy)
-                                {
-                                    // broadcast apenas para quem está no mapa
-                                    var aggroPayload = new
-                                    {
-                                        type = "mob_delta",
-                                        map = "mapa",
-                                        v = _areas["cidade"].Version + 1,
-                                        adds = new List<MobData>(),
-                                        updates = aggro,
-                                        removes = new List<MobData>()
-                                    };
-                                    Console.WriteLine("tentando aggrar o attacker");
-                                    var json = System.Text.Json.JsonSerializer.Serialize(aggroPayload);
-                                    await BroadcastAllAsync(json, map, ct);
-                                }
-                            }
 
                             if (mobs[idx].tipo == BossTipo)
                             {
@@ -802,6 +809,8 @@ namespace ServidorLocal
                                 }
                                 removes.Add(mob.idmob);
                                 mobs.RemoveAt(idx);
+                                _mobAggroTarget.TryRemove(mob.idmob, out _);
+
                             }
                             else
                             {
