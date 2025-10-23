@@ -397,9 +397,7 @@ namespace ServidorLocal
                 while (!result.EndOfMessage);
 
                 var msg = Encoding.UTF8.GetString(ms.ToArray());
-                Console.WriteLine(msg);
                 var initData = JsonSerializer.Deserialize<PlayerData>(msg);
-                Console.WriteLine(initData);
                 return initData;
             }
             catch (Exception ex)
@@ -492,7 +490,7 @@ namespace ServidorLocal
         }
 
 
-        private static MobData MoveMobAI(MobData mob, List<PlayerData> playersInArea, CancellationToken ct)
+        private static MobData MoveMobAI(MobData mob, List<PlayerData> playersInArea, CancellationToken ct, bool isAttackAggro = false)
         {
 
             float speed = 0.5f * Math.Max(1, mob.area);        // velocidade do mob
@@ -519,6 +517,10 @@ namespace ServidorLocal
                 else if (mob.tipo == 103)
                 {
                     attackCooldownMs = 2000;
+                }
+                if (isAttackAggro)
+                {
+                    aggroRange = 999f;
                 }
                 else { attackCooldownMs = 1500; }
             }
@@ -716,7 +718,6 @@ namespace ServidorLocal
 
                             var env = JsonSerializer.Deserialize<SocketEnvelope<MobHitInput>>(msg);
                             if (env.data == null) return;
-                            Console.WriteLine(msg);
                             if (!_playersMap.TryGetValue(clientId, out var map)) return;
                             if (!_areas.TryGetValue(map, out var areaState)) return;
 
@@ -812,7 +813,6 @@ namespace ServidorLocal
                             var newArea = areaState with { Version = areaState.Version + 1, Mobs = mobs.ToArray() };
                             var newDict = new Dictionary<string, AreaState>(_areas, StringComparer.OrdinalIgnoreCase) { [map] = newArea };
                             _areas = newDict;
-                            Console.WriteLine(updates.Count);
                             // broadcast delta
                             var deltaPayload = new
                             {
@@ -857,13 +857,9 @@ namespace ServidorLocal
 
                 case "sell_item":
                     {
-                        Console.WriteLine(msg);
                         try
                         {
                             var env = JsonSerializer.Deserialize<SocketEnvelope<SellInput>>(msg);
-                            Console.WriteLine("===");
-                            Console.WriteLine(env);
-                            Console.WriteLine("===");
                             if (env.data == null)
                             {
                                 return;
@@ -890,7 +886,6 @@ namespace ServidorLocal
 
                 case "buy_item":
                     {
-                        Console.WriteLine(msg);
                         try
                         {
                             var env = JsonSerializer.Deserialize<SocketEnvelope<BuyInput>>(msg);
@@ -924,7 +919,6 @@ namespace ServidorLocal
                     }
                 case "quer_mamar":
                     var mamar = new { type = "quer_mamar" };
-                    Console.WriteLine("teste");
                     await BroadcastRawAsync(JsonSerializer.Serialize(mamar), null, ct);
                     break;
 
@@ -1339,17 +1333,6 @@ namespace ServidorLocal
                     var json = System.Text.Json.JsonSerializer.Serialize(deltaPayload);
                     await BroadcastAllAsync(json, map, stop);
 
-                    // ---------- DEBUG: Delta de mobs ----------
-                    // ---------- DEBUG: Delta de mobs ----------
-                    if (adds.Count > 0)
-                    {
-                        Console.WriteLine($"[DEBUG] Enviando delta para mapa={map} com {adds.Count} mobs novos");
-                        foreach (var mob in adds)
-                        {
-                            Console.WriteLine($"[DEBUG] -> Mob Tipo={mob.tipo}, ID={mob.idmob}, Pos=({mob.posx},{mob.posy})");
-                        }
-                    }
-
 
                 }
             }
@@ -1629,10 +1612,3 @@ namespace ServidorLocal
     }
 }
 
-/* Tipos auxiliares esperados (já existentes no seu projeto)
-   - PlayerData: record com (idplayer, posx, posy, mapa, status)
-   - MobData: record struct com (idmob, posx, posy, life, tipo, area)
-   - SpawnData: record com (PosX, PosY, LastSpawnedTime, MobData[], Mapa)
-   - EnvelopeTypeOnly, SocketEnvelope<T>, MapData, SkillCastInput, SkillCast
-   Mantenha-os como já estão em ServidorLocal.Domain.
-*/
