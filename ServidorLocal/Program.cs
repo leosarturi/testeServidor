@@ -1020,6 +1020,7 @@ namespace ServidorLocal
         }
         private static async Task AwardLootAsync(string killerId, MobLoot mobLoot, string map, CancellationToken ct)
         {
+            if (mobLoot.item == 0 && mobLoot.currency == 0) return;
             var partyId = _partyOfPlayer.TryGetValue(killerId, out var p) ? p : null;
 
             List<string> recipients;
