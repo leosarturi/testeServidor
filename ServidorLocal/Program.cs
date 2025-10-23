@@ -544,6 +544,10 @@ namespace ServidorLocal
                         _mobAggroTarget.TryRemove(mob.idmob, out _);
                     }
                 }
+                else
+                {
+                    _mobAggroTarget.TryRemove(mob.idmob, out _);
+                }
             }
 
 
