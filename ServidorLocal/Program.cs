@@ -734,7 +734,7 @@ namespace ServidorLocal
                             List<string> removes = new();
                             if (mobs[idx].tipo < 20)
                             {
-                                var aggro = MoveMobAI(mobs[idx], new PlayerData[] { _players[clientId] }.ToList(), ct);
+                                var aggro = MoveMobAI(mobs[idx], new PlayerData[] { _players[clientId] }.ToList(), ct, isAttackAggro: true);
                                 if (aggro.posx != mobs[idx].posx || aggro.posy != mobs[idx].posy)
                                 {
                                     // broadcast apenas para quem está no mapa
@@ -747,6 +747,7 @@ namespace ServidorLocal
                                         updates = aggro,
                                         removes = new List<MobData>()
                                     };
+                                    Console.WriteLine("tentando aggrar o attacker");
                                     var json = System.Text.Json.JsonSerializer.Serialize(aggroPayload);
                                     await BroadcastAllAsync(json, map, ct);
                                 }
