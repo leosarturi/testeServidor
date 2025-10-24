@@ -751,7 +751,10 @@ namespace ServidorLocal
                             var newLife = Math.Max(0, mob.life - env.data.dmg);
                             bool died = newLife <= 0;
                             if (env.data.dmg > 5)
+                            {
+                                Console.WriteLine($"Client Id {clientId} deu dano {env.data.dmg}");
                                 _mobAggroTarget[mob.idmob] = clientId;
+                            }
 
                             List<MobData> updates = new();
                             List<string> removes = new();
