@@ -752,7 +752,6 @@ namespace ServidorLocal
                             bool died = newLife <= 0;
                             if (env.data.dmg > 5)
                             {
-                                Console.WriteLine($"Client Id {clientId} deu dano {env.data.dmg}");
                                 _mobAggroTarget[mob.idmob] = clientId;
                             }
 
