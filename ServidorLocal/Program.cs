@@ -569,7 +569,7 @@ namespace ServidorLocal
                 }
 
                 // Se encontrou e está no raio de aggro
-                if (target != null && (closest <= aggroRange || target.Value.idplayer == _mobAggroTarget[mob.idmob]))
+                if (target != null && (closest <= aggroRange || (_mobAggroTarget.TryGetValue(mob.idmob, out var a) && target.Value.idplayer == a)))
                 {
                     // Movimento em direção ao player
                     dx = target.Value.posx - mob.posx;
