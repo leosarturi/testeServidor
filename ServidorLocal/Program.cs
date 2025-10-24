@@ -739,6 +739,7 @@ namespace ServidorLocal
 
                             var env = JsonSerializer.Deserialize<SocketEnvelope<MobHitInput>>(msg);
                             if (env.data == null) return;
+                            if (env.data.dmg == 0) return;
                             if (!_playersMap.TryGetValue(clientId, out var map)) return;
                             if (!_areas.TryGetValue(map, out var areaState)) return;
 
@@ -754,6 +755,7 @@ namespace ServidorLocal
                             {
                                 _mobAggroTarget[mob.idmob] = clientId;
                             }
+
 
                             List<MobData> updates = new();
                             List<string> removes = new();
