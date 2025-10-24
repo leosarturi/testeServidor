@@ -536,17 +536,12 @@ namespace ServidorLocal
                     {
                         // Só persegue o alvo atual
                         playersInArea = new List<PlayerData> { targetPlayer };
-                        aggroRange = 999;
                     }
                     else
                     {
                         // Se o alvo saiu do mapa, limpa o aggro
                         _mobAggroTarget.TryRemove(mob.idmob, out _);
                     }
-                }
-                else
-                {
-                    _mobAggroTarget.TryRemove(mob.idmob, out _);
                 }
             }
 
@@ -574,7 +569,7 @@ namespace ServidorLocal
                 }
 
                 // Se encontrou e está no raio de aggro
-                if (target != null && closest <= aggroRange)
+                if (target != null && (closest <= aggroRange || target.Value.idplayer == _mobAggroTarget[mob.idmob]))
                 {
                     // Movimento em direção ao player
                     dx = target.Value.posx - mob.posx;
@@ -753,9 +748,9 @@ namespace ServidorLocal
                             if (idx == -1) return;
 
                             var mob = mobs[idx];
-                            _mobAggroTarget[mob.idmob] = clientId;
                             var newLife = Math.Max(0, mob.life - env.data.dmg);
                             bool died = newLife <= 0;
+                            _mobAggroTarget[mob.idmob] = clientId;
 
                             List<MobData> updates = new();
                             List<string> removes = new();
@@ -808,8 +803,8 @@ namespace ServidorLocal
                                                                   + (long)BossRespawnDelay.TotalMilliseconds;
                                 }
                                 removes.Add(mob.idmob);
-                                mobs.RemoveAt(idx);
                                 _mobAggroTarget.TryRemove(mob.idmob, out _);
+                                mobs.RemoveAt(idx);
 
                             }
                             else
