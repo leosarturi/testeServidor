@@ -110,13 +110,13 @@ namespace MirrorOfKrakovia.Api.Controllers
 
         // 🔑 Login
         [HttpPost("login")]
-        public async Task<IActionResult> Login([FromBody] dynamic data)
+        public async Task<IActionResult> Login([FromBody] LoginUsuarioDto dto)
         {
-            string usuarioNome = data?.usuario ?? string.Empty;
-            string senha = data?.senha ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(dto.Usuario) || string.IsNullOrWhiteSpace(dto.Senha))
+                return BadRequest("Usuário e senha são obrigatórios.");
 
-            var usuario = await _usuarios.Find(u => u.UsuarioNome == usuarioNome).FirstOrDefaultAsync();
-            if (usuario == null || !usuario.VerifyPassword(senha))
+            var usuario = await _usuarios.Find(u => u.UsuarioNome == dto.Usuario).FirstOrDefaultAsync();
+            if (usuario == null || !usuario.VerifyPassword(dto.Senha))
                 return Unauthorized("Usuário ou senha inválidos.");
 
             return Ok(new
@@ -128,13 +128,70 @@ namespace MirrorOfKrakovia.Api.Controllers
             });
         }
 
+
         // ✏️ Atualizar
         [HttpPut("{id}")]
-        public async Task<IActionResult> Update(string id, [FromBody] Usuario usuario)
+        public async Task<IActionResult> Update(string id, [FromBody] UpdateUsuarioDto dto)
         {
-            var result = await _usuarios.ReplaceOneAsync(u => u.Id == id, usuario);
-            return result.MatchedCount == 0 ? NotFound() : Ok(usuario);
+            var usuario = await _usuarios.Find(u => u.Id == id).FirstOrDefaultAsync();
+            if (usuario == null)
+                return NotFound("Usuário não encontrado.");
+
+            // 🚫 Verifica duplicações se alterou usuário/email
+            if (!string.IsNullOrWhiteSpace(dto.Usuario) && dto.Usuario != usuario.UsuarioNome)
+            {
+                var jaExiste = await _usuarios.Find(u => u.UsuarioNome == dto.Usuario).FirstOrDefaultAsync();
+                if (jaExiste != null)
+                    return Conflict("Nome de usuário já está em uso.");
+                usuario.UsuarioNome = dto.Usuario;
+            }
+
+            if (!string.IsNullOrWhiteSpace(dto.Email) && dto.Email != usuario.Email)
+            {
+                var jaExisteEmail = await _usuarios.Find(u => u.Email == dto.Email).FirstOrDefaultAsync();
+                if (jaExisteEmail != null)
+                    return Conflict("E-mail já está em uso.");
+                usuario.Email = dto.Email;
+            }
+
+            // 🔒 Não alterar senha aqui!
+            await _usuarios.ReplaceOneAsync(u => u.Id == id, usuario);
+
+            return Ok(new
+            {
+                message = "Usuário atualizado com sucesso!",
+                usuario.Id,
+                usuario.UsuarioNome,
+                usuario.Email
+            });
         }
+
+
+        [HttpPut("{id}/alterar-senha")]
+        public async Task<IActionResult> AlterarSenha(string id, [FromBody] AlterarSenhaDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto.SenhaAtual) || string.IsNullOrWhiteSpace(dto.NovaSenha))
+                return BadRequest("Senha atual e nova senha são obrigatórias.");
+
+            var usuario = await _usuarios.Find(u => u.Id == id).FirstOrDefaultAsync();
+            if (usuario == null)
+                return NotFound("Usuário não encontrado.");
+
+            // 🔐 valida senha atual
+            if (!usuario.VerifyPassword(dto.SenhaAtual))
+                return Unauthorized("Senha atual incorreta.");
+
+            // 🔒 atualiza senha
+            usuario.SenhaHash = Usuario.HashPassword(dto.NovaSenha);
+            await _usuarios.ReplaceOneAsync(u => u.Id == id, usuario);
+
+            return Ok(new
+            {
+                message = "Senha alterada com sucesso!"
+            });
+        }
+
+
 
         // ❌ Remover
         [HttpDelete("{id}")]
