@@ -160,7 +160,7 @@ namespace ServidorLocal
         private static readonly (int x, int y) BossSpawnDG2 = (0, 0);
         private static readonly (int x, int y) BossSpawnDG3 = (0, 0);
         private static readonly (int x, int y) BossSpawnDG4 = (0, 0);
-        private static readonly (int x, int y) BossSpawnDG5 = (0, 0);
+        private static readonly (int x, int y) BossSpawnDG5 = (0, -30);
 
 
 
@@ -514,7 +514,7 @@ namespace ServidorLocal
                 }
                 else if (mob.tipo == 101)
                 {
-                    attackCooldownMs = 3000;
+                    attackCooldownMs = 3500;
                 }
                 else if (mob.tipo == 102)
                 {
@@ -522,11 +522,7 @@ namespace ServidorLocal
                 }
                 else if (mob.tipo == 103)
                 {
-                    attackCooldownMs = 2000;
-                }
-                if (isAttackAggro)
-                {
-                    aggroRange = 999f;
+                    attackCooldownMs = 3000;
                 }
                 else { attackCooldownMs = 1500; }
             }
@@ -540,7 +536,6 @@ namespace ServidorLocal
                     {
                         // Só persegue o alvo atual
                         playersInArea = new List<PlayerData> { targetPlayer };
-                        aggroRange = 999;
                     }
                     else
                     {
@@ -574,7 +569,7 @@ namespace ServidorLocal
                 }
 
                 // Se encontrou e está no raio de aggro
-                if (target != null && closest <= aggroRange)
+                if (target != null && (closest <= aggroRange || (_mobAggroTarget.TryGetValue(mob.idmob, out var a) && target.Value.idplayer == a)))
                 {
                     // Movimento em direção ao player
                     dx = target.Value.posx - mob.posx;
@@ -597,7 +592,7 @@ namespace ServidorLocal
                         {
                             _mobLastAttackAt[mob.idmob] = now; // inicia cooldown
                             int attack;
-                            if (mob.tipo == 101)
+                            if (mob.tipo == 101 || mob.tipo == 103)
                             {
                                 double r = Random.Shared.NextDouble(); // 0.0 .. 1.0
                                 if (r < 0.40)           // 45%
@@ -744,6 +739,7 @@ namespace ServidorLocal
 
                             var env = JsonSerializer.Deserialize<SocketEnvelope<MobHitInput>>(msg);
                             if (env.data == null) return;
+                            if (env.data.dmg == 0) return;
                             if (!_playersMap.TryGetValue(clientId, out var map)) return;
                             if (!_areas.TryGetValue(map, out var areaState)) return;
 
@@ -753,9 +749,13 @@ namespace ServidorLocal
                             if (idx == -1) return;
 
                             var mob = mobs[idx];
-                            _mobAggroTarget[mob.idmob] = clientId;
                             var newLife = Math.Max(0, mob.life - env.data.dmg);
                             bool died = newLife <= 0;
+                            if (env.data.dmg > 5)
+                            {
+                                _mobAggroTarget[mob.idmob] = clientId;
+                            }
+
 
                             List<MobData> updates = new();
                             List<string> removes = new();
@@ -808,8 +808,8 @@ namespace ServidorLocal
                                                                   + (long)BossRespawnDelay.TotalMilliseconds;
                                 }
                                 removes.Add(mob.idmob);
-                                mobs.RemoveAt(idx);
                                 _mobAggroTarget.TryRemove(mob.idmob, out _);
+                                mobs.RemoveAt(idx);
 
                             }
                             else
@@ -984,7 +984,7 @@ namespace ServidorLocal
         private static int ComputeMobXp(in MobData m)
         {
             // regra simples: tipo e área influenciam
-            var baseXp = (10 * (m.area + 1)) * 5;
+            var baseXp = (10 * (m.tipo + 1)) * 5;
             return Math.Max(5, baseXp);
         }
 
@@ -1020,6 +1020,7 @@ namespace ServidorLocal
         }
         private static async Task AwardLootAsync(string killerId, MobLoot mobLoot, string map, CancellationToken ct)
         {
+            if (mobLoot.item == 0 && mobLoot.currency == 0) return;
             var partyId = _partyOfPlayer.TryGetValue(killerId, out var p) ? p : null;
 
             List<string> recipients;
