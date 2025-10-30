@@ -1,0 +1,3 @@
+# Ignorar variáveis de ambiente
+.env
+.env.*
