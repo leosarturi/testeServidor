@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("MirrorOfKrakovia.Api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+0bc59e9209bc0dc010a8ea4e2d00913f1b947bbd")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+3e1c14edac5fe430340a323d0f5ffbd644a1524f")]
 [assembly: System.Reflection.AssemblyProductAttribute("MirrorOfKrakovia.Api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MirrorOfKrakovia.Api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
